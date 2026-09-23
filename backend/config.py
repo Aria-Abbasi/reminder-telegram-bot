@@ -18,7 +18,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     database_path: str = "data/reminders.db"
-    default_timezone: str = "UTC"
+    default_timezone: str = "Asia/Tehran"
     
     model_config = SettingsConfigDict(
         env_file=".env",

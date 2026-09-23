@@ -31,7 +31,7 @@ async def init_db() -> None:
                 user_id INTEGER PRIMARY KEY,
                 username TEXT,
                 first_name TEXT,
-                timezone TEXT DEFAULT 'UTC',
+                timezone TEXT DEFAULT 'Asia/Tehran',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -77,6 +77,12 @@ async def init_db() -> None:
                 await conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {default_val}")
             except Exception:
                 pass
+
+        # Migration: Update existing users with UTC or empty timezone to Asia/Tehran
+        try:
+            await conn.execute("UPDATE users SET timezone = 'Asia/Tehran' WHERE timezone = 'UTC' OR timezone IS NULL OR timezone = ''")
+        except Exception:
+            pass
 
         await conn.commit()
     logger.info("Database initialized successfully at %s", settings.db_path)

@@ -54,7 +54,7 @@ def test_interval_parsing():
 async def test_user_and_timezone():
     user = await get_or_create_user(12345, "testuser", "Test")
     assert user["user_id"] == 12345
-    assert user["timezone"] == "UTC"
+    assert user["timezone"] == "Asia/Tehran"
 
     await set_user_timezone(12345, "America/New_York")
     tz = await get_user_timezone(12345)

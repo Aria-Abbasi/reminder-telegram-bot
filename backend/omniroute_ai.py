@@ -88,7 +88,7 @@ DEFAULT_MEALS = {
 
 async def parse_reminder_with_omniroute(
     user_prompt: str,
-    user_timezone: str = "UTC",
+    user_timezone: str = "Asia/Tehran",
     meal_times: Optional[dict[str, str]] = None,
 ) -> list[ParsedReminder]:
     """
