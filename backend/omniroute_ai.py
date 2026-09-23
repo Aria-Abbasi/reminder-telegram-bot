@@ -138,12 +138,51 @@ Output ONLY valid JSON matching this schema:
     url = f"{settings.omniroute_base_url.rstrip('/')}/chat/completions"
 
     try:
-        async with httpx.AsyncClient(timeout=20.0) as client:
+        async with httpx.AsyncClient(timeout=35.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code == 200:
-                data = resp.json()
-                content = data["choices"][0]["message"]["content"]
-                parsed = json.loads(content)
+                raw_text = resp.text.strip()
+                content = ""
+
+                if raw_text.startswith("data:"):
+                    # OmniRoute returned Server-Sent Events (SSE) stream
+                    content_parts = []
+                    for line in raw_text.splitlines():
+                        line = line.strip()
+                        if not line.startswith("data:"):
+                            continue
+                        chunk_data = line[5:].strip()
+                        if not chunk_data or chunk_data == "[DONE]":
+                            continue
+                        try:
+                            chunk = json.loads(chunk_data)
+                            choices = chunk.get("choices", [])
+                            if choices:
+                                delta = choices[0].get("delta", {})
+                                c = delta.get("content") or choices[0].get("text")
+                                if c:
+                                    content_parts.append(c)
+                        except Exception:
+                            continue
+                    content = "".join(content_parts)
+                else:
+                    # Standard non-streaming JSON response
+                    data = json.loads(raw_text)
+                    choices = data.get("choices", [])
+                    if choices:
+                        content = choices[0].get("message", {}).get("content", "")
+
+                # Strip markdown code blocks if present
+                clean_content = content.strip()
+                if "```" in clean_content:
+                    match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", clean_content, re.DOTALL)
+                    if match:
+                        clean_content = match.group(1)
+                    else:
+                        clean_content = re.sub(r"^```(?:json)?\s*", "", clean_content)
+                        clean_content = re.sub(r"\s*```$", "", clean_content).strip()
+
+                parsed = json.loads(clean_content)
                 
                 # Normalize start_time to UTC ISO
                 start_dt = date_parser.parse(parsed["start_time"])
