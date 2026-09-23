@@ -11,11 +11,19 @@ services:
       - .env
     volumes:
       - ./data:/app/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    networks:
+      - default
+      - omniroute
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+networks:
+  default:
+  omniroute:
+    external: true
+    name: omniroute_default
+
