@@ -97,6 +97,7 @@ if frontend_dir.exists():
 
 
 @app.get("/")
+@app.head("/")
 async def serve_index() -> FileResponse:
     index_file = frontend_dir / "index.html"
     if not index_file.exists():
