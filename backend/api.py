@@ -63,7 +63,7 @@ def validate_telegram_init_data(init_data: str) -> dict[str, Any]:
     received_hash = parsed.pop("hash", None)
 
     # For local developer testing / standalone browser preview without Telegram:
-    if not settings.telegram_bot_token or settings.telegram_bot_token.startswith("your_"):
+    if not is_token_configured():
         if "user" in parsed:
             try:
                 return json.loads(parsed["user"])
@@ -97,12 +97,17 @@ def validate_telegram_init_data(init_data: str) -> dict[str, Any]:
     return json.loads(user_raw)
 
 
+import re
+
+def is_token_configured() -> bool:
+    return bool(settings.telegram_bot_token and re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", settings.telegram_bot_token.strip()))
+
 async def get_current_user(
     x_telegram_init_data: Optional[str] = Header(None, alias="X-Telegram-Init-Data"),
 ) -> dict[str, Any]:
     if not x_telegram_init_data:
-        # Check if in demo/dev mode
-        if not settings.telegram_bot_token or settings.telegram_bot_token.startswith("your_"):
+        # If no bot token configured, enable demo user for testing/browser access
+        if not is_token_configured():
             user_data = {"id": 12345678, "first_name": "Demo User", "username": "demouser"}
         else:
             raise HTTPException(
