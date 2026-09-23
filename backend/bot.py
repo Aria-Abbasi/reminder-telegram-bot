@@ -24,17 +24,44 @@ from backend.database import (
     delete_reminder,
     get_or_create_user,
     get_reminder,
+    get_user_meal_times,
     get_user_reminders,
     get_user_timezone,
+    reset_user_meal_times,
+    set_user_meal_times,
     set_user_timezone,
     snooze_reminder,
 )
 from backend.omniroute_ai import parse_reminder_with_omniroute
+import re
 
 logger = logging.getLogger(__name__)
 
 # Temporary in-memory cache for pending AI reminder confirmations: { "user_id": { ...parsed_data } }
 _pending_confirmations: dict[int, dict[str, Any]] = {}
+
+MEAL_ALIASES = {
+    "breakfast": "breakfast",
+    "morning": "breakfast",
+    "صبح": "breakfast",
+    "lunch": "lunch",
+    "noon": "lunch",
+    "ظهر": "lunch",
+    "ناهار": "lunch",
+    "afternoon": "afternoon",
+    "عصر": "afternoon",
+    "dinner": "dinner",
+    "night": "dinner",
+    "شب": "dinner",
+    "شام": "dinner",
+}
+
+MEAL_NAMES_FA = {
+    "breakfast": "صبح (Breakfast)",
+    "lunch": "ظهر (Lunch)",
+    "afternoon": "عصر (Afternoon)",
+    "dinner": "شب و شام (Dinner)",
+}
 
 
 def format_dt(dt_iso: str, tz_name: str) -> str:
@@ -60,12 +87,55 @@ def get_start_keyboard() -> InlineKeyboardMarkup:
         ])
     buttons.append([
         InlineKeyboardButton(text="📋 My Reminders", callback_data="btn_list"),
-        InlineKeyboardButton(text="🌍 Change Timezone", callback_data="btn_tz_menu"),
+        InlineKeyboardButton(text="🍽 Meal Times", callback_data="btn_mealtimes_menu"),
     ])
     buttons.append([
-        InlineKeyboardButton(text="💡 Help & Examples", callback_data="btn_help"),
+        InlineKeyboardButton(text="🌍 Timezone", callback_data="btn_tz_menu"),
+        InlineKeyboardButton(text="💡 Help & Guide", callback_data="btn_help"),
     ])
     return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+def get_mealtimes_keyboard(meals: dict[str, str]) -> InlineKeyboardMarkup:
+    b = meals.get("breakfast", "08:30")
+    l = meals.get("lunch", "12:30")
+    a = meals.get("afternoon", "17:00")
+    d = meals.get("dinner", "20:30")
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text=f"🌅 Morning (صبح): {b}", callback_data="meal_pick:breakfast"),
+                InlineKeyboardButton(text=f"☀️ Lunch (ظهر): {l}", callback_data="meal_pick:lunch"),
+            ],
+            [
+                InlineKeyboardButton(text=f"🌇 Afternoon (عصر): {a}", callback_data="meal_pick:afternoon"),
+                InlineKeyboardButton(text=f"🌙 Dinner (شب): {d}", callback_data="meal_pick:dinner"),
+            ],
+            [
+                InlineKeyboardButton(text="🔄 Reset Defaults", callback_data="meal_reset"),
+                InlineKeyboardButton(text="🔙 Main Menu", callback_data="btn_main_menu"),
+            ],
+        ]
+    )
+
+
+def get_quick_time_keyboard(meal_key: str) -> InlineKeyboardMarkup:
+    presets = {
+        "breakfast": ["07:00", "07:30", "08:00", "08:30", "09:00", "09:30"],
+        "lunch": ["12:00", "12:30", "13:00", "13:30", "14:00", "14:30"],
+        "afternoon": ["16:00", "16:30", "17:00", "17:30", "18:00", "18:30"],
+        "dinner": ["19:30", "20:00", "20:30", "21:00", "21:30", "22:00"],
+    }
+    times = presets.get(meal_key, ["08:00", "12:00", "18:00", "20:00"])
+    rows = []
+    for i in range(0, len(times), 3):
+        row = [
+            InlineKeyboardButton(text=f"⏰ {t}", callback_data=f"meal_set:{meal_key}:{t}")
+            for t in times[i : i + 3]
+        ]
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text="🔙 Back to Meals", callback_data="btn_mealtimes_menu")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def get_timezone_keyboard() -> InlineKeyboardMarkup:
@@ -130,6 +200,70 @@ def register_handlers(dp: Dispatcher) -> None:
                 return
 
         await message.answer("🌍 *Select your timezone:*", parse_mode="Markdown", reply_markup=get_timezone_keyboard())
+
+    @dp.message(Command("mealtimes"))
+    @dp.message(Command("meals"))
+    async def cmd_mealtimes(message: Message) -> None:
+        user = message.from_user
+        if not user:
+            return
+        meals = await get_user_meal_times(user.id)
+        text = (
+            "🍽 *Your Routine & Meal Times:*\n\n"
+            f"🌅 *Morning / Breakfast (صبح):* `{meals['breakfast']}`\n"
+            f"☀️ *Noon / Lunch (ظهر):* `{meals['lunch']}`\n"
+            f"🌇 *Afternoon (عصر):* `{meals['afternoon']}`\n"
+            f"🌙 *Evening / Dinner (شب / شام):* `{meals['dinner']}`\n\n"
+            "💡 _When you mention 'صبح', 'ظهر', or 'شب' in your reminders, OmniRoute AI automatically uses these times._\n\n"
+            "Tap a meal button below to change it, or type:\n"
+            "`/setmeal <meal> <HH:MM>` (e.g. `/setmeal breakfast 08:00` or `/setmeal شام 21:00`)"
+        )
+        await message.answer(text, parse_mode="Markdown", reply_markup=get_mealtimes_keyboard(meals))
+
+    @dp.message(Command("setmeal"))
+    async def cmd_setmeal(message: Message) -> None:
+        user = message.from_user
+        if not user or not message.text:
+            return
+        parts = message.text.strip().split()
+        if len(parts) < 3:
+            await message.answer(
+                "ℹ️ *Usage:* `/setmeal <meal> <HH:MM>`\n\n"
+                "Examples:\n"
+                "• `/setmeal breakfast 08:00`\n"
+                "• `/setmeal lunch 13:00`\n"
+                "• `/setmeal شام 21:00`\n"
+                "• `/setmeal صبح 07:30`",
+                parse_mode="Markdown",
+            )
+            return
+
+        meal_arg = parts[1].lower()
+        time_arg = parts[2].strip()
+
+        meal_key = MEAL_ALIASES.get(meal_arg)
+        if not meal_key:
+            await message.answer(
+                "⚠️ Unknown meal name. Supported: `breakfast (صبح)`, `lunch (ظهر)`, `afternoon (عصر)`, `dinner (شب/شام)`.",
+                parse_mode="Markdown",
+            )
+            return
+
+        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", time_arg):
+            await message.answer(
+                "⚠️ Invalid time format. Please use 24-hour format `HH:MM` (e.g. `08:30`, `13:15`, `21:00`).",
+                parse_mode="Markdown",
+            )
+            return
+
+        kwargs = {meal_key: time_arg}
+        updated = await set_user_meal_times(user.id, **kwargs)
+        meal_display = MEAL_NAMES_FA.get(meal_key, meal_key)
+        await message.answer(
+            f"✅ *{meal_display}* time updated to `{time_arg}`!\n\nAll subsequent reminders mentioning this time will trigger at `{time_arg}`.",
+            parse_mode="Markdown",
+            reply_markup=get_mealtimes_keyboard(updated),
+        )
 
     @dp.message(Command("list"))
     async def cmd_list(message: Message) -> None:
@@ -204,6 +338,81 @@ def register_handlers(dp: Dispatcher) -> None:
                 parse_mode="Markdown",
                 reply_markup=get_timezone_keyboard(),
             )
+        except TelegramBadRequest:
+            pass
+
+    @dp.callback_query(F.data == "btn_mealtimes_menu")
+    async def cb_mealtimes_menu(callback: CallbackQuery) -> None:
+        await callback.answer()
+        meals = await get_user_meal_times(callback.from_user.id)
+        text = (
+            "🍽 *Your Routine & Meal Times:*\n\n"
+            f"🌅 *Morning / Breakfast (صبح):* `{meals['breakfast']}`\n"
+            f"☀️ *Noon / Lunch (ظهر):* `{meals['lunch']}`\n"
+            f"🌇 *Afternoon (عصر):* `{meals['afternoon']}`\n"
+            f"🌙 *Evening / Dinner (شب / شام):* `{meals['dinner']}`\n\n"
+            "💡 _When you mention 'صبح', 'ظهر', or 'شب' in your reminders, OmniRoute AI automatically uses these times._\n\n"
+            "Tap a meal button below to change it, or type:\n"
+            "`/setmeal <meal> <HH:MM>`"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_mealtimes_keyboard(meals))
+        except TelegramBadRequest:
+            pass
+
+    @dp.callback_query(F.data.startswith("meal_pick:"))
+    async def cb_meal_pick(callback: CallbackQuery) -> None:
+        await callback.answer()
+        meal_key = callback.data.split(":")[1]
+        meals = await get_user_meal_times(callback.from_user.id)
+        current_val = meals.get(meal_key, "08:30")
+        meal_display = MEAL_NAMES_FA.get(meal_key, meal_key)
+        text = (
+            f"⚙️ *Configure {meal_display}*\n\n"
+            f"Current time: `{current_val}`\n\n"
+            "Choose a quick preset below, or reply with:\n"
+            f"`/setmeal {meal_key} <HH:MM>`"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_quick_time_keyboard(meal_key))
+        except TelegramBadRequest:
+            pass
+
+    @dp.callback_query(F.data.startswith("meal_set:"))
+    async def cb_meal_set(callback: CallbackQuery) -> None:
+        parts = callback.data.split(":")
+        meal_key = parts[1]
+        new_time = parts[2]
+        kwargs = {meal_key: new_time}
+        updated = await set_user_meal_times(callback.from_user.id, **kwargs)
+        meal_display = MEAL_NAMES_FA.get(meal_key, meal_key)
+        await callback.answer(f"Saved: {new_time}")
+        text = (
+            f"✅ *{meal_display}* time updated to `{new_time}`!\n\n"
+            "🍽 *Current Routine Times:*\n"
+            f"🌅 *Morning (صبح):* `{updated['breakfast']}`\n"
+            f"☀️ *Noon (ظهر):* `{updated['lunch']}`\n"
+            f"🌇 *Afternoon (عصر):* `{updated['afternoon']}`\n"
+            f"🌙 *Evening (شب):* `{updated['dinner']}`\n"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_mealtimes_keyboard(updated))
+        except TelegramBadRequest:
+            pass
+
+    @dp.callback_query(F.data == "meal_reset")
+    async def cb_meal_reset(callback: CallbackQuery) -> None:
+        defaults = await reset_user_meal_times(callback.from_user.id)
+        await callback.answer("Reset to default times!")
+        text = (
+            "🔄 *Meal times reset to defaults:*\n\n"
+            f"🌅 *Morning (صبح):* `{defaults['breakfast']}`\n"
+            f"☀️ *Noon (ظهر):* `{defaults['lunch']}`\n"
+            f"🌇 *Afternoon (عصر):* `{defaults['afternoon']}`\n"
+            f"🌙 *Evening (شب):* `{defaults['dinner']}`\n"
+        )
+        try:
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=get_mealtimes_keyboard(defaults))
         except TelegramBadRequest:
             pass
 
@@ -421,7 +630,8 @@ def register_handlers(dp: Dispatcher) -> None:
         typing_task = asyncio.create_task(_keep_typing())
         try:
             tz = await get_user_timezone(user.id)
-            parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+            user_meals = await get_user_meal_times(user.id)
+            parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz, meal_times=user_meals)
         except Exception as err:
             logger.exception("Error parsing reminder via OmniRoute: %s", err)
             await message.answer("⚠️ An error occurred while parsing your message. Please try again.")

@@ -23,6 +23,23 @@ async def test_api_endpoints():
         assert me.status_code == 200
         data = me.json()
         assert data["user_id"] == 12345678
+        assert "meal_times" in data
+        assert data["meal_times"]["breakfast"] == "08:30"
+
+        # Test PATCH /api/me/meal-times
+        patch_res = await ac.patch(
+            "/api/me/meal-times",
+            json={"breakfast": "07:45", "dinner": "21:15"},
+        )
+        assert patch_res.status_code == 200
+        assert patch_res.json()["meal_times"]["breakfast"] == "07:45"
+        assert patch_res.json()["meal_times"]["dinner"] == "21:15"
+        assert patch_res.json()["meal_times"]["lunch"] == "12:30"
+
+        # Test POST /api/me/meal-times/reset
+        reset_res = await ac.post("/api/me/meal-times/reset")
+        assert reset_res.status_code == 200
+        assert reset_res.json()["meal_times"]["breakfast"] == "08:30"
 
         # Test POST /api/reminders
         start_time = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)).isoformat()

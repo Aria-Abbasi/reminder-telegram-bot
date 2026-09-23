@@ -80,9 +80,14 @@
         </div>
       </div>
     </div>
-    <button onclick="openModal()" class="w-10 h-10 rounded-xl btn-primary flex items-center justify-center shadow-lg active:scale-95 transition-transform">
-      <i class="fa-solid fa-plus text-base"></i>
-    </button>
+    <div class="flex items-center gap-2">
+      <button onclick="openMealTimesModal()" title="Meal & Routine Times" class="w-10 h-10 rounded-xl bg-slate-800/80 border border-slate-700/60 text-amber-400 hover:text-amber-300 flex items-center justify-center shadow active:scale-95 transition-transform">
+        <i class="fa-solid fa-utensils text-sm"></i>
+      </button>
+      <button onclick="openModal()" class="w-10 h-10 rounded-xl btn-primary flex items-center justify-center shadow-lg active:scale-95 transition-transform">
+        <i class="fa-solid fa-plus text-base"></i>
+      </button>
+    </div>
   </header>
 
   <!-- OmniRoute AI Quick Add Bar -->
@@ -237,6 +242,119 @@
     </div>
   </div>
 
+  <!-- Meal & Routine Times Settings Modal -->
+  <div id="mealTimesModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="card w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 border-t sm:border border-slate-700/80 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2.5">
+          <div class="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center text-sm shadow-sm">
+            <i class="fa-solid fa-utensils"></i>
+          </div>
+          <div>
+            <h2 class="text-base font-bold text-white">Meal & Routine Times</h2>
+            <p class="text-[11px] text-slate-400">Used by OmniRoute AI when parsing morning, noon, and night reminders</p>
+          </div>
+        </div>
+        <button onclick="closeMealTimesModal()" class="w-8 h-8 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="mealTimesForm" onsubmit="handleSaveMealTimes(event)" class="space-y-3">
+        <!-- Morning / Breakfast -->
+        <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl">🌅</span>
+            <div>
+              <div class="text-xs font-semibold text-slate-200">Morning / Breakfast (صبح)</div>
+              <div class="text-[11px] text-slate-400">e.g. morning medications</div>
+            </div>
+          </div>
+          <input 
+            id="mealBreakfastInput" 
+            type="time" 
+            required 
+            value="08:30" 
+            class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+          >
+        </div>
+
+        <!-- Noon / Lunch -->
+        <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl">☀️</span>
+            <div>
+              <div class="text-xs font-semibold text-slate-200">Noon / Lunch (ظهر / ناهار)</div>
+              <div class="text-[11px] text-slate-400">e.g. midday pills & alerts</div>
+            </div>
+          </div>
+          <input 
+            id="mealLunchInput" 
+            type="time" 
+            required 
+            value="12:30" 
+            class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+          >
+        </div>
+
+        <!-- Afternoon -->
+        <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl">🌇</span>
+            <div>
+              <div class="text-xs font-semibold text-slate-200">Afternoon (عصر)</div>
+              <div class="text-[11px] text-slate-400">e.g. late afternoon tasks</div>
+            </div>
+          </div>
+          <input 
+            id="mealAfternoonInput" 
+            type="time" 
+            required 
+            value="17:00" 
+            class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+          >
+        </div>
+
+        <!-- Night / Dinner -->
+        <div class="bg-slate-800/60 p-3 rounded-xl border border-slate-700/50 flex items-center justify-between">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl">🌙</span>
+            <div>
+              <div class="text-xs font-semibold text-slate-200">Night / Dinner (شب / شام)</div>
+              <div class="text-[11px] text-slate-400">e.g. evening doses & bedtime</div>
+            </div>
+          </div>
+          <input 
+            id="mealDinnerInput" 
+            type="time" 
+            required 
+            value="20:30" 
+            class="bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+          >
+        </div>
+
+        <!-- Action Buttons -->
+        <div class="pt-2 flex gap-2">
+          <button 
+            type="button" 
+            onclick="handleResetMealTimes()" 
+            class="px-3.5 py-2.5 rounded-xl border border-slate-700 text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 transition"
+          >
+            Reset Defaults
+          </button>
+          <button 
+            type="submit" 
+            id="saveMealTimesBtn" 
+            class="flex-1 btn-primary py-2.5 rounded-xl font-semibold text-sm shadow-md active:scale-98 transition flex items-center justify-center gap-2"
+          >
+            <i class="fa-solid fa-floppy-disk"></i>
+            <span>Save Meal Times</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <script>
     // Telegram Web App SDK Initialization
     const tg = window.Telegram?.WebApp;
@@ -252,6 +370,7 @@
     let selectedIntervalSeconds = null;
     let selectedIntervalLabel = null;
     let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    let userMealTimes = { breakfast: '08:30', lunch: '12:30', afternoon: '17:00', dinner: '20:30' };
 
     // Init
     document.addEventListener('DOMContentLoaded', () => {
@@ -276,6 +395,10 @@
           document.getElementById('userName').textContent = user.first_name ? `${user.first_name}'s Reminders` : 'Reminders';
           userTimezone = user.timezone || userTimezone;
           document.getElementById('userTimezone').textContent = userTimezone;
+          if (user.meal_times) {
+            userMealTimes = user.meal_times;
+            updateMealInputs();
+          }
         }
       } catch (e) {
         console.warn('Could not fetch user profile:', e);
@@ -642,6 +765,100 @@
 
     function closeModal() {
       document.getElementById('reminderModal').classList.add('hidden');
+    }
+
+    function showToast(message) {
+      let toast = document.getElementById('appToast');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'appToast';
+        toast.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-slate-800 text-white border border-slate-700 shadow-xl px-4 py-2 rounded-2xl text-xs font-semibold z-50 transition-all duration-300 pointer-events-none opacity-0 -translate-y-2 flex items-center gap-2';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = message;
+      toast.classList.remove('opacity-0', '-translate-y-2');
+      toast.classList.add('opacity-100', 'translate-y-0');
+      setTimeout(() => {
+        toast.classList.remove('opacity-100', 'translate-y-0');
+        toast.classList.add('opacity-0', '-translate-y-2');
+      }, 2500);
+    }
+
+    function updateMealInputs() {
+      const b = document.getElementById('mealBreakfastInput');
+      const l = document.getElementById('mealLunchInput');
+      const a = document.getElementById('mealAfternoonInput');
+      const d = document.getElementById('mealDinnerInput');
+      if (b) b.value = userMealTimes.breakfast || '08:30';
+      if (l) l.value = userMealTimes.lunch || '12:30';
+      if (a) a.value = userMealTimes.afternoon || '17:00';
+      if (d) d.value = userMealTimes.dinner || '20:30';
+    }
+
+    function openMealTimesModal() {
+      updateMealInputs();
+      document.getElementById('mealTimesModal').classList.remove('hidden');
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+    }
+
+    function closeMealTimesModal() {
+      document.getElementById('mealTimesModal').classList.add('hidden');
+    }
+
+    async function handleSaveMealTimes(event) {
+      event.preventDefault();
+      const btn = document.getElementById('saveMealTimesBtn');
+      btn.disabled = true;
+      const originalHtml = btn.innerHTML;
+      btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Saving...';
+
+      const breakfast = document.getElementById('mealBreakfastInput').value;
+      const lunch = document.getElementById('mealLunchInput').value;
+      const afternoon = document.getElementById('mealAfternoonInput').value;
+      const dinner = document.getElementById('mealDinnerInput').value;
+
+      try {
+        const res = await fetch('/api/me/meal-times', {
+          method: 'PATCH',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ breakfast, lunch, afternoon, dinner }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          userMealTimes = data.meal_times;
+          updateMealInputs();
+          closeMealTimesModal();
+          if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+          showToast('✅ Routine times saved!');
+        } else {
+          alert('Failed to save meal times. Please check time format.');
+        }
+      } catch (err) {
+        console.error(err);
+        alert('Network error while saving meal times.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+      }
+    }
+
+    async function handleResetMealTimes() {
+      if (!confirm('Reset meal and routine times to defaults?')) return;
+      try {
+        const res = await fetch('/api/me/meal-times/reset', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          userMealTimes = data.meal_times;
+          updateMealInputs();
+          if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+          showToast('🔄 Meal times reset to defaults!');
+        }
+      } catch (err) {
+        console.error(err);
+      }
     }
 
     function escapeHtml(str) {

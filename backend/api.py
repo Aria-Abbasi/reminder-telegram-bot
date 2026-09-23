@@ -16,8 +16,11 @@ from backend.database import (
     delete_reminder,
     get_or_create_user,
     get_reminder,
+    get_user_meal_times,
     get_user_reminders,
     get_user_timezone,
+    reset_user_meal_times,
+    set_user_meal_times,
     set_user_timezone,
     snooze_reminder,
 )
@@ -42,6 +45,13 @@ class SnoozeRequest(BaseModel):
 
 class TimezoneRequest(BaseModel):
     timezone: str
+
+
+class MealTimesRequest(BaseModel):
+    breakfast: Optional[str] = Field(None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    lunch: Optional[str] = Field(None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    afternoon: Optional[str] = Field(None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    dinner: Optional[str] = Field(None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 class AIParseRequest(BaseModel):
@@ -127,12 +137,14 @@ async def get_current_user(
 @router.get("/me")
 async def get_me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     reminders = await get_user_reminders(user["user_id"], status="active")
+    meal_times = await get_user_meal_times(user["user_id"])
     return {
         "user_id": user["user_id"],
         "username": user.get("username"),
         "first_name": user.get("first_name"),
         "timezone": user.get("timezone", settings.default_timezone),
         "active_count": len(reminders),
+        "meal_times": meal_times,
     }
 
 
@@ -143,6 +155,29 @@ async def update_timezone(
 ) -> dict[str, Any]:
     await set_user_timezone(user["user_id"], req.timezone)
     return {"status": "ok", "timezone": req.timezone}
+
+
+@router.patch("/me/meal-times")
+async def update_meal_times(
+    req: MealTimesRequest,
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    updated = await set_user_meal_times(
+        user["user_id"],
+        breakfast=req.breakfast,
+        lunch=req.lunch,
+        afternoon=req.afternoon,
+        dinner=req.dinner,
+    )
+    return {"status": "ok", "meal_times": updated}
+
+
+@router.post("/me/meal-times/reset")
+async def reset_meal_times(
+    user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    defaults = await reset_user_meal_times(user["user_id"])
+    return {"status": "ok", "meal_times": defaults}
 
 
 @router.get("/reminders")
@@ -244,6 +279,7 @@ async def ai_parse(
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     tz = await get_user_timezone(user["user_id"])
-    parsed_list = await parse_reminder_with_omniroute(req.prompt, user_timezone=tz)
+    meal_times = await get_user_meal_times(user["user_id"])
+    parsed_list = await parse_reminder_with_omniroute(req.prompt, user_timezone=tz, meal_times=meal_times)
     return {"reminders": [p.to_dict() for p in parsed_list]}
 

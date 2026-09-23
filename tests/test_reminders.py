@@ -15,13 +15,17 @@ from backend.database import (
     get_due_reminders,
     get_or_create_user,
     get_reminder,
+    get_user_meal_times,
     get_user_reminders,
     get_user_timezone,
     init_db,
+    reset_user_meal_times,
+    set_user_meal_times,
     set_user_timezone,
     snooze_reminder,
 )
-from backend.omniroute_ai import parse_interval_string
+from backend.omniroute_ai import fallback_local_parse, parse_interval_string
+import pytz
 
 
 @pytest.fixture(autouse=True)
@@ -55,6 +59,37 @@ async def test_user_and_timezone():
     await set_user_timezone(12345, "America/New_York")
     tz = await get_user_timezone(12345)
     assert tz == "America/New_York"
+
+
+@pytest.mark.asyncio
+async def test_user_meal_times_and_parsing():
+    user = await get_or_create_user(54321, "mealuser", "Meal")
+    meals = await get_user_meal_times(54321)
+    assert meals["breakfast"] == "08:30"
+    assert meals["lunch"] == "12:30"
+    assert meals["afternoon"] == "17:00"
+    assert meals["dinner"] == "20:30"
+
+    # Set custom meals
+    updated = await set_user_meal_times(54321, breakfast="07:15", dinner="21:45")
+    assert updated["breakfast"] == "07:15"
+    assert updated["lunch"] == "12:30"
+    assert updated["dinner"] == "21:45"
+
+    # Verify fallback_local_parse uses these times
+    tz = pytz.timezone("Asia/Tehran")
+    parsed = fallback_local_parse("قرص صبح ۱ عدد", tz, meal_times=updated)
+    assert len(parsed) == 1
+    # Check that it scheduled for 07:15 local time
+    dt = datetime.datetime.fromisoformat(parsed[0].start_time_iso).astimezone(tz)
+    assert dt.hour == 7
+    assert dt.minute == 15
+    assert parsed[0].interval_seconds == 86400
+
+    # Reset
+    reset_vals = await reset_user_meal_times(54321)
+    assert reset_vals["breakfast"] == "08:30"
+    assert reset_vals["dinner"] == "20:30"
 
 
 @pytest.mark.asyncio

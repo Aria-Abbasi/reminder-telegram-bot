@@ -78,20 +78,35 @@ def parse_interval_string(text: str) -> tuple[Optional[int], Optional[str]]:
     return None, None
 
 
+DEFAULT_MEALS = {
+    "breakfast": "08:30",
+    "lunch": "12:30",
+    "afternoon": "17:00",
+    "dinner": "20:30",
+}
+
+
 async def parse_reminder_with_omniroute(
     user_prompt: str,
     user_timezone: str = "UTC",
+    meal_times: Optional[dict[str, str]] = None,
 ) -> list[ParsedReminder]:
     """
     Calls the local OmniRoute instance using model 'combo' to parse natural language
     into a structured list of reminders with start_time, interval, and optional end_time.
-    Supports single or multiple reminders in a single command.
+    Supports single or multiple reminders in a single command and custom user meal times.
     """
     try:
         tz = pytz.timezone(user_timezone)
     except Exception:
         tz = pytz.UTC
         user_timezone = "UTC"
+
+    meals = {**DEFAULT_MEALS, **(meal_times or {})}
+    b_time = meals.get("breakfast", "08:30")
+    l_time = meals.get("lunch", "12:30")
+    a_time = meals.get("afternoon", "17:00")
+    d_time = meals.get("dinner", "20:30")
 
     now_local = datetime.datetime.now(tz)
     current_time_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)")
@@ -101,16 +116,22 @@ You are an expert reminder assistant. Extract all reminder tasks from the user's
 Current local time: {current_time_str}
 User timezone: {user_timezone}
 
+User configured routine times:
+- Morning / Breakfast ("صبح"): {b_time}
+- Noon / Lunch ("ظهر"): {l_time}
+- Afternoon ("عصر"): {a_time}
+- Night / Dinner ("شب" / "شام"): {d_time}
+
 CRITICAL RULES:
 1. If the user mentions ONE task, return a list with 1 reminder.
 2. If the user mentions MULTIPLE tasks (e.g. "Remind me to call John at 2pm, take medicine at 6pm, and water plants every 3 days"), extract each task into its own item in `reminders` with its own independent title, start_time, and interval.
 3. `title`: Concise task description without "remind me to".
 4. `start_time`: ISO 8601 string (with UTC offset or local timezone) of when the task should trigger for the FIRST time.
-   - For morning / "صبح" / "breakfast": schedule for 08:30 local time (if already past 08:30 today, set to tomorrow at 08:30).
-   - For noon / "ظهر" / "lunch": schedule for 12:30 local time (if already past 12:30 today, set to tomorrow at 12:30).
-   - For afternoon / "عصر": schedule for 17:00 local time (if already past 17:00 today, set to tomorrow at 17:00).
-   - For night / "شب" / "شام" / "dinner": schedule for 20:30 local time (if already past 20:30 today, set to tomorrow at 20:30).
-   - If user doesn't specify a time, default to 1 hour from now or tomorrow morning at 09:00.
+   - For morning / "صبح" / "breakfast": schedule for {b_time} local time (if already past {b_time} today, set to tomorrow at {b_time}).
+   - For noon / "ظهر" / "lunch": schedule for {l_time} local time (if already past {l_time} today, set to tomorrow at {l_time}).
+   - For afternoon / "عصر": schedule for {a_time} local time (if already past {a_time} today, set to tomorrow at {a_time}).
+   - For night / "شب" / "شام" / "dinner": schedule for {d_time} local time (if already past {d_time} today, set to tomorrow at {d_time}).
+   - If user doesn't specify a time, default to 1 hour from now or tomorrow morning at {b_time}.
 5. `interval_seconds`: Integer in seconds between recurrences (e.g. 6 hours = 21600, 8 hours = 28800, 24 hours = 86400, 7 days = 604800).
    - For daily habits or medications ("هر روز", "هر صبح", "هر ظهر", "هر شب", "daily"): set to 86400 (Daily).
    - If one-off or not recurring, set to null.
@@ -242,13 +263,30 @@ Output ONLY valid JSON matching this schema:
         logger.error("OmniRoute AI parse exception: %s. Falling back to local parser.", e)
 
     # Local Fallback Parser
-    return fallback_local_parse(user_prompt, tz)
+    return fallback_local_parse(user_prompt, tz, meals)
 
 
-def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> list[ParsedReminder]:
+def fallback_local_parse(
+    text: str,
+    tz: pytz.BaseTzInfo,
+    meal_times: Optional[dict[str, str]] = None,
+) -> list[ParsedReminder]:
     """Smart local fallback parser when OmniRoute AI is not reachable."""
     now_local = datetime.datetime.now(tz)
-    
+    meals = {**DEFAULT_MEALS, **(meal_times or {})}
+
+    def _parse_hm(t_str: str, default_h: int, default_m: int) -> tuple[int, int]:
+        try:
+            parts = t_str.strip().split(":")
+            return int(parts[0]), int(parts[1])
+        except Exception:
+            return default_h, default_m
+
+    b_h, b_m = _parse_hm(meals.get("breakfast", "08:30"), 8, 30)
+    l_h, l_m = _parse_hm(meals.get("lunch", "12:30"), 12, 30)
+    a_h, a_m = _parse_hm(meals.get("afternoon", "17:00"), 17, 0)
+    d_h, d_m = _parse_hm(meals.get("dinner", "20:30"), 20, 30)
+
     # Split on " and also ", " and then ", ";", or newline if multiple tasks
     chunks = [c.strip() for c in re.split(r";|\n|(?:\s+and\s+also\s+)", text) if c.strip()]
     if not chunks:
@@ -263,23 +301,23 @@ def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> list[ParsedReminder]
         hour: int | None = None
         minute = 0
         if "صبح" in chunk or "breakfast" in chunk_lower or "morning" in chunk_lower:
-            hour = 8
-            minute = 30
+            hour = b_h
+            minute = b_m
             if not interval_seconds:
                 interval_seconds, interval_label = 86400, "Daily"
         elif "ظهر" in chunk or "ناهار" in chunk or "lunch" in chunk_lower or "noon" in chunk_lower:
-            hour = 12
-            minute = 30
+            hour = l_h
+            minute = l_m
             if not interval_seconds:
                 interval_seconds, interval_label = 86400, "Daily"
         elif "عصر" in chunk or "afternoon" in chunk_lower:
-            hour = 17
-            minute = 0
+            hour = a_h
+            minute = a_m
             if not interval_seconds:
                 interval_seconds, interval_label = 86400, "Daily"
         elif "شب" in chunk or "شام" in chunk or "dinner" in chunk_lower or "night" in chunk_lower:
-            hour = 20
-            minute = 30
+            hour = d_h
+            minute = d_m
             if not interval_seconds:
                 interval_seconds, interval_label = 86400, "Daily"
         elif "هر" in chunk and not interval_seconds:

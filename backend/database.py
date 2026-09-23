@@ -65,6 +65,19 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_reminders_user 
             ON reminders(user_id, status)
         """)
+
+        # Migration: Ensure meal time columns exist on users table
+        for col, default_val in [
+            ("breakfast_time", "'08:30'"),
+            ("lunch_time", "'12:30'"),
+            ("afternoon_time", "'17:00'"),
+            ("dinner_time", "'20:30'"),
+        ]:
+            try:
+                await conn.execute(f"ALTER TABLE users ADD COLUMN {col} TEXT DEFAULT {default_val}")
+            except Exception:
+                pass
+
         await conn.commit()
     logger.info("Database initialized successfully at %s", settings.db_path)
 
@@ -122,6 +135,86 @@ async def get_user_timezone(user_id: int) -> str:
             if row and row["timezone"]:
                 return str(row["timezone"])
     return settings.default_timezone
+
+
+DEFAULT_MEAL_TIMES: dict[str, str] = {
+    "breakfast": "08:30",
+    "lunch": "12:30",
+    "afternoon": "17:00",
+    "dinner": "20:30",
+}
+
+
+async def get_user_meal_times(user_id: int) -> dict[str, str]:
+    async with get_db_connection() as conn:
+        async with conn.execute(
+            "SELECT breakfast_time, lunch_time, afternoon_time, dinner_time FROM users WHERE user_id = ?",
+            (user_id,),
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return {
+                    "breakfast": row["breakfast_time"] or DEFAULT_MEAL_TIMES["breakfast"],
+                    "lunch": row["lunch_time"] or DEFAULT_MEAL_TIMES["lunch"],
+                    "afternoon": row["afternoon_time"] or DEFAULT_MEAL_TIMES["afternoon"],
+                    "dinner": row["dinner_time"] or DEFAULT_MEAL_TIMES["dinner"],
+                }
+    return dict(DEFAULT_MEAL_TIMES)
+
+
+async def set_user_meal_times(
+    user_id: int,
+    breakfast: Optional[str] = None,
+    lunch: Optional[str] = None,
+    afternoon: Optional[str] = None,
+    dinner: Optional[str] = None,
+) -> dict[str, str]:
+    current = await get_user_meal_times(user_id)
+    new_breakfast = breakfast or current["breakfast"]
+    new_lunch = lunch or current["lunch"]
+    new_afternoon = afternoon or current["afternoon"]
+    new_dinner = dinner or current["dinner"]
+    now = utc_now_iso()
+
+    async with get_db_connection() as conn:
+        await conn.execute(
+            """
+            UPDATE users 
+            SET breakfast_time = ?, lunch_time = ?, afternoon_time = ?, dinner_time = ?, updated_at = ?
+            WHERE user_id = ?
+            """,
+            (new_breakfast, new_lunch, new_afternoon, new_dinner, now, user_id),
+        )
+        await conn.commit()
+
+    return {
+        "breakfast": new_breakfast,
+        "lunch": new_lunch,
+        "afternoon": new_afternoon,
+        "dinner": new_dinner,
+    }
+
+
+async def reset_user_meal_times(user_id: int) -> dict[str, str]:
+    now = utc_now_iso()
+    async with get_db_connection() as conn:
+        await conn.execute(
+            """
+            UPDATE users 
+            SET breakfast_time = ?, lunch_time = ?, afternoon_time = ?, dinner_time = ?, updated_at = ?
+            WHERE user_id = ?
+            """,
+            (
+                DEFAULT_MEAL_TIMES["breakfast"],
+                DEFAULT_MEAL_TIMES["lunch"],
+                DEFAULT_MEAL_TIMES["afternoon"],
+                DEFAULT_MEAL_TIMES["dinner"],
+                now,
+                user_id,
+            ),
+        )
+        await conn.commit()
+    return dict(DEFAULT_MEAL_TIMES)
 
 
 async def create_reminder(
