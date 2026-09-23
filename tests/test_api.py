@@ -58,3 +58,22 @@ async def test_api_endpoints():
         del_res = await ac.delete(f"/api/reminders/{rem_id}")
         assert del_res.status_code == 200
         assert del_res.json()["status"] == "deleted"
+
+        # Test POST /api/reminders/batch
+        batch_payload = [
+            {"title": "Task 1", "start_time": start_time},
+            {"title": "Task 2", "start_time": start_time, "interval_seconds": 3600, "interval_label": "Every hour"},
+        ]
+        batch_res = await ac.post("/api/reminders/batch", json=batch_payload)
+        assert batch_res.status_code == 201
+        created_batch = batch_res.json()
+        assert len(created_batch) == 2
+        assert created_batch[0]["title"] == "Task 1"
+        assert created_batch[1]["title"] == "Task 2"
+
+        # Test POST /api/ai/parse
+        ai_res = await ac.post("/api/ai/parse", json={"prompt": "Remind me to call John and also wash car"})
+        assert ai_res.status_code == 200
+        ai_data = ai_res.json()
+        assert "reminders" in ai_data
+        assert len(ai_data["reminders"]) >= 1

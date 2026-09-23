@@ -480,26 +480,50 @@
 
         if (res.ok) {
           const data = await res.json();
-          // Open modal prefilled with parsed AI data for user confirmation
-          openModal();
-          document.getElementById('formTitle').value = data.title || prompt;
-          if (data.start_time) {
-            const localStart = new Date(data.start_time);
-            document.getElementById('formStartTime').value = new Date(localStart.getTime() - localStart.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          const reminders = data.reminders || (data.title ? [data] : []);
+
+          if (!reminders.length) {
+            alert('Could not parse any reminders from your input.');
+            return;
           }
-          if (data.interval_seconds) {
-            selectIntervalPreset(data.interval_seconds, data.interval_label || 'Custom');
+
+          if (reminders.length === 1) {
+            // Open modal prefilled with single parsed reminder
+            const r = reminders[0];
+            openModal();
+            document.getElementById('formTitle').value = r.title || prompt;
+            if (r.start_time) {
+              const localStart = new Date(r.start_time);
+              document.getElementById('formStartTime').value = new Date(localStart.getTime() - localStart.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            }
+            if (r.interval_seconds) {
+              selectIntervalPreset(r.interval_seconds, r.interval_label || 'Custom');
+            } else {
+              selectIntervalPreset(0, 'None (One-time)');
+            }
+            if (r.end_time) {
+              document.getElementById('enableEndTime').checked = true;
+              toggleEndTimeInput();
+              const localEnd = new Date(r.end_time);
+              document.getElementById('formEndTime').value = new Date(localEnd.getTime() - localEnd.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+            } else {
+              document.getElementById('enableEndTime').checked = false;
+              toggleEndTimeInput();
+            }
           } else {
-            selectIntervalPreset(0, 'None (One-time)');
-          }
-          if (data.end_time) {
-            document.getElementById('enableEndTime').checked = true;
-            toggleEndTimeInput();
-            const localEnd = new Date(data.end_time);
-            document.getElementById('formEndTime').value = new Date(localEnd.getTime() - localEnd.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-          } else {
-            document.getElementById('enableEndTime').checked = false;
-            toggleEndTimeInput();
+            // Multiple reminders: confirm and schedule all in batch
+            const summary = reminders.map((r, i) => `${i + 1}. ${r.title} (${r.interval_label || 'Once'})`).join('\n');
+            if (confirm(`🤖 OmniRoute AI found ${reminders.length} reminders:\n\n${summary}\n\nSchedule all now?`)) {
+              const batchRes = await fetch('/api/reminders/batch', {
+                method: 'POST',
+                headers: getAuthHeaders(),
+                body: JSON.stringify(reminders),
+              });
+              if (batchRes.ok) {
+                if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+                await loadReminders();
+              }
+            }
           }
           input.value = '';
           if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');

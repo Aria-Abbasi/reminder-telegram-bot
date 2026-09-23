@@ -81,10 +81,11 @@ def parse_interval_string(text: str) -> tuple[Optional[int], Optional[str]]:
 async def parse_reminder_with_omniroute(
     user_prompt: str,
     user_timezone: str = "UTC",
-) -> ParsedReminder:
+) -> list[ParsedReminder]:
     """
     Calls the local OmniRoute instance using model 'combo' to parse natural language
-    into a structured reminder with start_time, interval, and optional end_time.
+    into a structured list of reminders with start_time, interval, and optional end_time.
+    Supports single or multiple reminders in a single command.
     """
     try:
         tz = pytz.timezone(user_timezone)
@@ -96,26 +97,32 @@ async def parse_reminder_with_omniroute(
     current_time_str = now_local.strftime("%Y-%m-%d %H:%M:%S %Z (UTC%z)")
 
     system_instruction = f"""
-You are an expert reminder assistant. Convert the user's natural language request into a structured reminder JSON.
+You are an expert reminder assistant. Extract all reminder tasks from the user's message into a structured JSON list.
 Current local time: {current_time_str}
 User timezone: {user_timezone}
 
 CRITICAL RULES:
-1. `title`: Clear, concise summary of the action/task (do not include "remind me to").
-2. `start_time`: ISO 8601 string (with UTC offset or local timezone) of when the reminder should trigger for the FIRST time. If the user doesn't specify a time, default to 1 hour from now or the next morning at 09:00 if it's late.
-3. `interval_seconds`: Integer in seconds between recurrences (e.g. 6 hours = 21600, 8 hours = 28800, 24 hours = 86400, 7 days = 604800). If one-off or not recurring, set to null.
-4. `interval_label`: Friendly string like "Every 8 hours", "Every 6 hours", "Daily", "Every 7 days", or null if not recurring.
-5. `end_time`: ISO 8601 string of the cut-off date/time when recurrence must STOP (e.g. "until next Friday"). If no end time specified, set to null.
-6. `explanation`: Brief 1-sentence confirmation of what was scheduled.
+1. If the user mentions ONE task, return a list with 1 reminder.
+2. If the user mentions MULTIPLE tasks (e.g. "Remind me to call John at 2pm, take medicine at 6pm, and water plants every 3 days"), extract each task into its own item in `reminders` with its own independent title, start_time, and interval.
+3. `title`: Concise task description without "remind me to".
+4. `start_time`: ISO 8601 string (with UTC offset or local timezone) of when the task should trigger for the FIRST time. If the user doesn't specify a time, default to 1 hour from now or the next morning at 09:00 if it's late.
+5. `interval_seconds`: Integer in seconds between recurrences (e.g. 6 hours = 21600, 8 hours = 28800, 24 hours = 86400, 7 days = 604800). If one-off or not recurring, set to null.
+6. `interval_label`: Friendly string like "Every 8 hours", "Every 6 hours", "Daily", "Every 7 days", or null if not recurring.
+7. `end_time`: ISO 8601 string of the cut-off date/time when recurrence must STOP (e.g. "until next Friday"). If no end time specified, set to null.
+8. `explanation`: Brief 1-sentence confirmation of what was scheduled.
 
 Output ONLY valid JSON matching this schema:
 {{
-  "title": "string",
-  "start_time": "YYYY-MM-DDTHH:MM:SS+00:00",
-  "interval_seconds": null or integer,
-  "interval_label": null or "string",
-  "end_time": null or "YYYY-MM-DDTHH:MM:SS+00:00",
-  "explanation": "string"
+  "reminders": [
+    {{
+      "title": "string",
+      "start_time": "YYYY-MM-DDTHH:MM:SS+00:00",
+      "interval_seconds": null or integer,
+      "interval_label": null or "string",
+      "end_time": null or "YYYY-MM-DDTHH:MM:SS+00:00",
+      "explanation": "string"
+    }}
+  ]
 }}
 """
 
@@ -183,28 +190,45 @@ Output ONLY valid JSON matching this schema:
                         clean_content = re.sub(r"\s*```$", "", clean_content).strip()
 
                 parsed = json.loads(clean_content)
+
+                # Normalize items list (supports both {"reminders": [...]} and single object)
+                items = parsed.get("reminders") if isinstance(parsed.get("reminders"), list) else [parsed]
                 
-                # Normalize start_time to UTC ISO
-                start_dt = date_parser.parse(parsed["start_time"])
-                if start_dt.tzinfo is None:
-                    start_dt = tz.localize(start_dt)
-                start_utc_iso = start_dt.astimezone(datetime.timezone.utc).isoformat()
+                results: list[ParsedReminder] = []
+                for item in items:
+                    if not isinstance(item, dict) or not item.get("title"):
+                        continue
+                    
+                    # Normalize start_time to UTC ISO
+                    start_str = item.get("start_time")
+                    if start_str:
+                        start_dt = date_parser.parse(start_str)
+                    else:
+                        start_dt = now_local + datetime.timedelta(hours=1)
+                    if start_dt.tzinfo is None:
+                        start_dt = tz.localize(start_dt)
+                    start_utc_iso = start_dt.astimezone(datetime.timezone.utc).isoformat()
 
-                end_utc_iso = None
-                if parsed.get("end_time"):
-                    end_dt = date_parser.parse(parsed["end_time"])
-                    if end_dt.tzinfo is None:
-                        end_dt = tz.localize(end_dt)
-                    end_utc_iso = end_dt.astimezone(datetime.timezone.utc).isoformat()
+                    end_utc_iso = None
+                    if item.get("end_time"):
+                        end_dt = date_parser.parse(item["end_time"])
+                        if end_dt.tzinfo is None:
+                            end_dt = tz.localize(end_dt)
+                        end_utc_iso = end_dt.astimezone(datetime.timezone.utc).isoformat()
 
-                return ParsedReminder(
-                    title=parsed.get("title", user_prompt),
-                    start_time_iso=start_utc_iso,
-                    interval_seconds=parsed.get("interval_seconds"),
-                    interval_label=parsed.get("interval_label"),
-                    end_time_iso=end_utc_iso,
-                    explanation=parsed.get("explanation"),
-                )
+                    results.append(
+                        ParsedReminder(
+                            title=item.get("title", user_prompt),
+                            start_time_iso=start_utc_iso,
+                            interval_seconds=item.get("interval_seconds"),
+                            interval_label=item.get("interval_label"),
+                            end_time_iso=end_utc_iso,
+                            explanation=item.get("explanation"),
+                        )
+                    )
+
+                if results:
+                    return results
             else:
                 logger.warning("OmniRoute error HTTP %s: %s", resp.status_code, resp.text)
     except Exception as e:
@@ -214,29 +238,38 @@ Output ONLY valid JSON matching this schema:
     return fallback_local_parse(user_prompt, tz)
 
 
-def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> ParsedReminder:
+def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> list[ParsedReminder]:
     """Local fallback parser when OmniRoute AI is not reachable."""
     now_local = datetime.datetime.now(tz)
-    interval_seconds, interval_label = parse_interval_string(text)
     
-    # Default start time: 1 hour from now
-    start_dt = now_local + datetime.timedelta(hours=1)
-    
-    # Clean title
-    cleaned_title = re.sub(
-        r"^(remind me to|remind me|alert me to|please remind me to)\s+",
-        "",
-        text,
-        flags=re.IGNORECASE,
-    ).strip()
+    # Split on " and also ", " and then ", ";", or newline if multiple tasks
+    chunks = [c.strip() for c in re.split(r";|\n|(?:\s+and\s+also\s+)", text) if c.strip()]
+    if not chunks:
+        chunks = [text]
 
-    start_utc_iso = start_dt.astimezone(datetime.timezone.utc).isoformat()
+    results: list[ParsedReminder] = []
+    for idx, chunk in enumerate(chunks):
+        interval_seconds, interval_label = parse_interval_string(chunk)
+        start_dt = now_local + datetime.timedelta(hours=1 + idx)
 
-    return ParsedReminder(
-        title=cleaned_title or text,
-        start_time_iso=start_utc_iso,
-        interval_seconds=interval_seconds,
-        interval_label=interval_label,
-        end_time_iso=None,
-        explanation=f"Scheduled for {start_dt.strftime('%b %d at %H:%M')}" + (f" ({interval_label})" if interval_label else ""),
-    )
+        cleaned_title = re.sub(
+            r"^(remind me to|remind me|alert me to|please remind me to)\s+",
+            "",
+            chunk,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        start_utc_iso = start_dt.astimezone(datetime.timezone.utc).isoformat()
+
+        results.append(
+            ParsedReminder(
+                title=cleaned_title or chunk,
+                start_time_iso=start_utc_iso,
+                interval_seconds=interval_seconds,
+                interval_label=interval_label,
+                end_time_iso=None,
+                explanation=f"Scheduled for {start_dt.strftime('%b %d at %H:%M')}" + (f" ({interval_label})" if interval_label else ""),
+            )
+        )
+
+    return results

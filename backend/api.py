@@ -218,11 +218,32 @@ async def delete(
     return {"status": "deleted"}
 
 
+@router.post("/reminders/batch", status_code=status.HTTP_201_CREATED)
+async def create_batch_reminders(
+    req: list[CreateReminderRequest],
+    user: dict[str, Any] = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    created = []
+    for item in req:
+        rem = await create_reminder(
+            user_id=user["user_id"],
+            chat_id=user["user_id"],
+            title=item.title,
+            start_time=item.start_time,
+            interval_seconds=item.interval_seconds,
+            interval_label=item.interval_label,
+            end_time=item.end_time,
+        )
+        created.append(rem)
+    return created
+
+
 @router.post("/ai/parse")
 async def ai_parse(
     req: AIParseRequest,
     user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
     tz = await get_user_timezone(user["user_id"])
-    parsed = await parse_reminder_with_omniroute(req.prompt, user_timezone=tz)
-    return parsed.to_dict()
+    parsed_list = await parse_reminder_with_omniroute(req.prompt, user_timezone=tz)
+    return {"reminders": [p.to_dict() for p in parsed_list]}
+

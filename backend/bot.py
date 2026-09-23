@@ -311,34 +311,44 @@ def register_handlers(dp: Dispatcher) -> None:
     @dp.callback_query(F.data == "confirm_ai_reminder")
     async def cb_confirm_ai(callback: CallbackQuery) -> None:
         user_id = callback.from_user.id
-        data = _pending_confirmations.pop(user_id, None)
-        if not data:
+        items = _pending_confirmations.pop(user_id, [])
+        if not items:
             await callback.answer("Expired confirmation. Please try again.")
             return
 
         chat_id = callback.message.chat.id
-        reminder = await create_reminder(
-            user_id=user_id,
-            chat_id=chat_id,
-            title=data["title"],
-            start_time=data["start_time"],
-            interval_seconds=data.get("interval_seconds"),
-            interval_label=data.get("interval_label"),
-            end_time=data.get("end_time"),
-        )
         tz = await get_user_timezone(user_id)
-        start_str = format_dt(reminder["next_run_at"], tz)
+        created_list = []
+        for data in items:
+            rem = await create_reminder(
+                user_id=user_id,
+                chat_id=chat_id,
+                title=data["title"],
+                start_time=data["start_time"],
+                interval_seconds=data.get("interval_seconds"),
+                interval_label=data.get("interval_label"),
+                end_time=data.get("end_time"),
+            )
+            created_list.append(rem)
 
         await callback.answer("Scheduled!")
-        confirm_text = (
-            f"🎉 *Reminder Scheduled Successfully!*\n\n"
-            f"📌 *Task:* {reminder['title']}\n"
-            f"⏰ *First Run:* `{start_str}`\n"
-            f"🔄 *Interval:* {reminder['interval_label'] or 'None (One-time)'}\n"
-        )
-        if reminder.get("end_time"):
-            end_str = format_dt(reminder["end_time"], tz)
-            confirm_text += f"🏁 *End Time:* `{end_str}`\n"
+        if len(created_list) == 1:
+            r = created_list[0]
+            start_str = format_dt(r["next_run_at"], tz)
+            confirm_text = (
+                f"🎉 *Reminder Scheduled Successfully!*\n\n"
+                f"📌 *Task:* {r['title']}\n"
+                f"⏰ *First Run:* `{start_str}`\n"
+                f"🔄 *Interval:* {r['interval_label'] or 'None (One-time)'}\n"
+            )
+            if r.get("end_time"):
+                confirm_text += f"🏁 *End Time:* `{format_dt(r['end_time'], tz)}`\n"
+        else:
+            confirm_text = f"🎉 *{len(created_list)} Reminders Scheduled Successfully!*\n\n"
+            for i, r in enumerate(created_list, 1):
+                start_str = format_dt(r["next_run_at"], tz)
+                interval_str = f" ({r['interval_label']})" if r.get("interval_label") else ""
+                confirm_text += f"{i}️⃣ *{r['title']}* — `{start_str}`{interval_str}\n"
 
         buttons = []
         if settings.webapp_url:
@@ -357,7 +367,7 @@ def register_handlers(dp: Dispatcher) -> None:
         await callback.answer("Cancelled")
         await callback.message.edit_text("❌ Reminder creation cancelled.")
 
-    # Natural Language Handler via OmniRoute Combo
+    # Natural Language Handler via OmniRoute Combo (Supports Single & Multiple Reminders)
     @dp.message(F.text)
     async def handle_natural_language(message: Message) -> None:
         user = message.from_user
@@ -368,33 +378,49 @@ def register_handlers(dp: Dispatcher) -> None:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
         tz = await get_user_timezone(user.id)
-        parsed = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+        parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+        if not parsed_list:
+            await message.answer("⚠️ Could not parse any reminders from your message. Please try rephrasing.")
+            return
 
         # Store in pending confirmations
-        _pending_confirmations[user.id] = parsed.to_dict()
+        _pending_confirmations[user.id] = [p.to_dict() for p in parsed_list]
 
-        start_str = format_dt(parsed.start_time_iso, tz)
-        interval_str = parsed.interval_label or "None (One-time)"
-        end_str = format_dt(parsed.end_time_iso, tz) if parsed.end_time_iso else "None (Runs indefinitely)"
+        if len(parsed_list) == 1:
+            p = parsed_list[0]
+            start_str = format_dt(p.start_time_iso, tz)
+            interval_str = p.interval_label or "None (One-time)"
+            end_str = format_dt(p.end_time_iso, tz) if p.end_time_iso else "None"
 
-        preview_text = (
-            f"🤖 *OmniRoute AI Parsed Your Reminder:*\n\n"
-            f"📌 *Task:* {parsed.title}\n"
-            f"⏰ *Start Time:* `{start_str}`\n"
-            f"🔄 *Interval:* `{interval_str}`\n"
-            f"🏁 *End Time:* `{end_str}`\n\n"
-            f"Confirm scheduling this reminder?"
-        )
+            preview_text = (
+                f"🤖 *OmniRoute AI Parsed Reminder:*\n\n"
+                f"📌 *Task:* {p.title}\n"
+                f"⏰ *Start Time:* `{start_str}`\n"
+                f"🔄 *Interval:* `{interval_str}`\n"
+            )
+            if p.end_time_iso:
+                preview_text += f"🏁 *End Time:* `{end_str}`\n"
+            preview_text += "\nConfirm scheduling this reminder?"
+            btn_label = "✅ Confirm & Schedule"
+        else:
+            preview_text = f"🤖 *OmniRoute AI Parsed {len(parsed_list)} Reminders:*\n\n"
+            for i, p in enumerate(parsed_list, 1):
+                start_str = format_dt(p.start_time_iso, tz)
+                interval_str = f" ({p.interval_label})" if p.interval_label else ""
+                end_str = f" (Until {format_dt(p.end_time_iso, tz)})" if p.end_time_iso else ""
+                preview_text += f"{i}️⃣ *{p.title}*\n   ⏰ `{start_str}`{interval_str}{end_str}\n\n"
+            preview_text += f"Confirm scheduling all {len(parsed_list)} reminders?"
+            btn_label = f"✅ Confirm All ({len(parsed_list)})"
 
         buttons = [
             [
-                InlineKeyboardButton(text="✅ Confirm & Schedule", callback_data="confirm_ai_reminder"),
+                InlineKeyboardButton(text=btn_label, callback_data="confirm_ai_reminder"),
                 InlineKeyboardButton(text="❌ Cancel", callback_data="cancel_ai_reminder"),
             ]
         ]
         if settings.webapp_url:
             buttons.append([
-                InlineKeyboardButton(text="✏️ Edit in Mini App", web_app=WebAppInfo(url=settings.webapp_url))
+                InlineKeyboardButton(text="✏️ Open Mini App", web_app=WebAppInfo(url=settings.webapp_url))
             ])
 
         await message.answer(
