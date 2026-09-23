@@ -105,8 +105,15 @@ CRITICAL RULES:
 1. If the user mentions ONE task, return a list with 1 reminder.
 2. If the user mentions MULTIPLE tasks (e.g. "Remind me to call John at 2pm, take medicine at 6pm, and water plants every 3 days"), extract each task into its own item in `reminders` with its own independent title, start_time, and interval.
 3. `title`: Concise task description without "remind me to".
-4. `start_time`: ISO 8601 string (with UTC offset or local timezone) of when the task should trigger for the FIRST time. If the user doesn't specify a time, default to 1 hour from now or the next morning at 09:00 if it's late.
-5. `interval_seconds`: Integer in seconds between recurrences (e.g. 6 hours = 21600, 8 hours = 28800, 24 hours = 86400, 7 days = 604800). If one-off or not recurring, set to null.
+4. `start_time`: ISO 8601 string (with UTC offset or local timezone) of when the task should trigger for the FIRST time.
+   - For morning / "صبح" / "breakfast": schedule for 08:30 local time (if already past 08:30 today, set to tomorrow at 08:30).
+   - For noon / "ظهر" / "lunch": schedule for 12:30 local time (if already past 12:30 today, set to tomorrow at 12:30).
+   - For afternoon / "عصر": schedule for 17:00 local time (if already past 17:00 today, set to tomorrow at 17:00).
+   - For night / "شب" / "شام" / "dinner": schedule for 20:30 local time (if already past 20:30 today, set to tomorrow at 20:30).
+   - If user doesn't specify a time, default to 1 hour from now or tomorrow morning at 09:00.
+5. `interval_seconds`: Integer in seconds between recurrences (e.g. 6 hours = 21600, 8 hours = 28800, 24 hours = 86400, 7 days = 604800).
+   - For daily habits or medications ("هر روز", "هر صبح", "هر ظهر", "هر شب", "daily"): set to 86400 (Daily).
+   - If one-off or not recurring, set to null.
 6. `interval_label`: Friendly string like "Every 8 hours", "Every 6 hours", "Daily", "Every 7 days", or null if not recurring.
 7. `end_time`: ISO 8601 string of the cut-off date/time when recurrence must STOP (e.g. "until next Friday"). If no end time specified, set to null.
 8. `explanation`: Brief 1-sentence confirmation of what was scheduled.
@@ -145,7 +152,7 @@ Output ONLY valid JSON matching this schema:
     url = f"{settings.omniroute_base_url.rstrip('/')}/chat/completions"
 
     try:
-        async with httpx.AsyncClient(timeout=35.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, headers=headers, json=payload)
             if resp.status_code == 200:
                 raw_text = resp.text.strip()
@@ -239,7 +246,7 @@ Output ONLY valid JSON matching this schema:
 
 
 def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> list[ParsedReminder]:
-    """Local fallback parser when OmniRoute AI is not reachable."""
+    """Smart local fallback parser when OmniRoute AI is not reachable."""
     now_local = datetime.datetime.now(tz)
     
     # Split on " and also ", " and then ", ";", or newline if multiple tasks
@@ -249,8 +256,44 @@ def fallback_local_parse(text: str, tz: pytz.BaseTzInfo) -> list[ParsedReminder]
 
     results: list[ParsedReminder] = []
     for idx, chunk in enumerate(chunks):
+        chunk_lower = chunk.lower()
         interval_seconds, interval_label = parse_interval_string(chunk)
-        start_dt = now_local + datetime.timedelta(hours=1 + idx)
+
+        # Smart Persian time inference:
+        hour: int | None = None
+        minute = 0
+        if "صبح" in chunk or "breakfast" in chunk_lower or "morning" in chunk_lower:
+            hour = 8
+            minute = 30
+            if not interval_seconds:
+                interval_seconds, interval_label = 86400, "Daily"
+        elif "ظهر" in chunk or "ناهار" in chunk or "lunch" in chunk_lower or "noon" in chunk_lower:
+            hour = 12
+            minute = 30
+            if not interval_seconds:
+                interval_seconds, interval_label = 86400, "Daily"
+        elif "عصر" in chunk or "afternoon" in chunk_lower:
+            hour = 17
+            minute = 0
+            if not interval_seconds:
+                interval_seconds, interval_label = 86400, "Daily"
+        elif "شب" in chunk or "شام" in chunk or "dinner" in chunk_lower or "night" in chunk_lower:
+            hour = 20
+            minute = 30
+            if not interval_seconds:
+                interval_seconds, interval_label = 86400, "Daily"
+        elif "هر" in chunk and not interval_seconds:
+            interval_seconds, interval_label = 86400, "Daily"
+
+        if hour is not None:
+            # Set target datetime
+            target_dt = now_local.replace(hour=hour, minute=minute, second=0, microsecond=0)
+            if target_dt <= now_local:
+                # If target time today has already passed, schedule for tomorrow
+                target_dt += datetime.timedelta(days=1)
+            start_dt = target_dt
+        else:
+            start_dt = now_local + datetime.timedelta(hours=1 + idx)
 
         cleaned_title = re.sub(
             r"^(remind me to|remind me|alert me to|please remind me to)\s+",

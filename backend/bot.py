@@ -374,11 +374,25 @@ def register_handlers(dp: Dispatcher) -> None:
         if not user or not message.text:
             return
 
-        # Send temporary typing action
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+        # Keep sending typing action while AI processes
+        typing_active = True
 
-        tz = await get_user_timezone(user.id)
-        parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+        async def _keep_typing() -> None:
+            while typing_active:
+                try:
+                    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+                except Exception:
+                    pass
+                await asyncio.sleep(4.5)
+
+        typing_task = asyncio.create_task(_keep_typing())
+        try:
+            tz = await get_user_timezone(user.id)
+            parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+        finally:
+            typing_active = False
+            typing_task.cancel()
+
         if not parsed_list:
             await message.answer("⚠️ Could not parse any reminders from your message. Please try rephrasing.")
             return
