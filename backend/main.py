@@ -4,6 +4,7 @@ import asyncio
 from contextlib import asynccontextmanager
 import logging
 import os
+import re
 from pathlib import Path
 from typing import AsyncIterator
 from aiogram import Bot, Dispatcher
@@ -37,10 +38,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     scheduler: ReminderScheduler | None = None
     bot_task: asyncio.Task | None = None
 
-    # 2. Start Bot and Scheduler if bot token is provided
-    if settings.telegram_bot_token and not settings.telegram_bot_token.startswith("your_"):
+    # 2. Start Bot and Scheduler if valid bot token is provided
+    is_valid_token = bool(settings.telegram_bot_token and re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", settings.telegram_bot_token.strip()))
+    if is_valid_token:
         logger.info("Initializing Telegram Bot...")
-        bot = Bot(token=settings.telegram_bot_token)
+        bot = Bot(token=settings.telegram_bot_token.strip())
         dp = Dispatcher()
         register_handlers(dp)
 
