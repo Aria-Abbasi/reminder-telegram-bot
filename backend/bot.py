@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 import logging
 from typing import Any
 import pytz
 from aiogram import Bot, Dispatcher, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
@@ -195,31 +197,43 @@ def register_handlers(dp: Dispatcher) -> None:
 
     @dp.callback_query(F.data == "btn_tz_menu")
     async def cb_tz_menu(callback: CallbackQuery) -> None:
-        await callback.message.edit_text(
-            "🌍 *Choose your timezone:*",
-            parse_mode="Markdown",
-            reply_markup=get_timezone_keyboard(),
-        )
+        await callback.answer()
+        try:
+            await callback.message.edit_text(
+                "🌍 *Choose your timezone:*",
+                parse_mode="Markdown",
+                reply_markup=get_timezone_keyboard(),
+            )
+        except TelegramBadRequest:
+            pass
 
     @dp.callback_query(F.data == "btn_main_menu")
     async def cb_main_menu(callback: CallbackQuery) -> None:
-        await callback.message.edit_text(
-            "👋 What would you like to do?",
-            parse_mode="Markdown",
-            reply_markup=get_start_keyboard(),
-        )
+        await callback.answer()
+        try:
+            await callback.message.edit_text(
+                "👋 What would you like to do?",
+                parse_mode="Markdown",
+                reply_markup=get_start_keyboard(),
+            )
+        except TelegramBadRequest:
+            pass
 
     @dp.callback_query(F.data == "btn_list")
     async def cb_btn_list(callback: CallbackQuery) -> None:
+        await callback.answer()
         user_id = callback.from_user.id
         reminders = await get_user_reminders(user_id, status="active")
         tz = await get_user_timezone(user_id)
 
         if not reminders:
-            await callback.message.edit_text(
-                "📭 You have no active reminders.\nType a task or open the Mini App to create one!",
-                reply_markup=get_start_keyboard(),
-            )
+            try:
+                await callback.message.edit_text(
+                    "📭 You have no active reminders.\nType a task or open the Mini App to create one!",
+                    reply_markup=get_start_keyboard(),
+                )
+            except TelegramBadRequest:
+                pass
             return
 
         text = "📋 *Your Active Reminders:*\n\n"
@@ -239,10 +253,14 @@ def register_handlers(dp: Dispatcher) -> None:
             ])
         buttons.append([InlineKeyboardButton(text="🔙 Back", callback_data="btn_main_menu")])
 
-        await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        try:
+            await callback.message.edit_text(text, parse_mode="Markdown", reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        except TelegramBadRequest:
+            pass
 
     @dp.callback_query(F.data == "btn_help")
     async def cb_btn_help(callback: CallbackQuery) -> None:
+        await callback.answer()
         help_text = (
             "💡 *Reminder Bot Guide*\n\n"
             "• *Start Time*: The exact date and time the reminder triggers first.\n"
@@ -251,11 +269,14 @@ def register_handlers(dp: Dispatcher) -> None:
             "🤖 *OmniRoute AI Integration:*\n"
             "Just type what you want in plain text! Or tap *Open Mini App* for the visual dashboard."
         )
-        await callback.message.edit_text(
-            help_text,
-            parse_mode="Markdown",
-            reply_markup=get_start_keyboard(),
-        )
+        try:
+            await callback.message.edit_text(
+                help_text,
+                parse_mode="Markdown",
+                reply_markup=get_start_keyboard(),
+            )
+        except TelegramBadRequest:
+            pass
 
     @dp.callback_query(F.data.startswith("done:"))
     async def cb_done(callback: CallbackQuery) -> None:
@@ -354,18 +375,30 @@ def register_handlers(dp: Dispatcher) -> None:
         if settings.webapp_url:
             buttons.append([InlineKeyboardButton(text="📱 View in Mini App", web_app=WebAppInfo(url=settings.webapp_url))])
 
-        await callback.message.edit_text(
-            confirm_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None,
-        )
+        try:
+            await callback.message.edit_text(
+                confirm_text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None,
+            )
+        except Exception:
+            try:
+                await callback.message.edit_text(
+                    confirm_text.replace("*", "").replace("`", ""),
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None,
+                )
+            except TelegramBadRequest:
+                pass
 
     @dp.callback_query(F.data == "cancel_ai_reminder")
     async def cb_cancel_ai(callback: CallbackQuery) -> None:
         user_id = callback.from_user.id
         _pending_confirmations.pop(user_id, None)
         await callback.answer("Cancelled")
-        await callback.message.edit_text("❌ Reminder creation cancelled.")
+        try:
+            await callback.message.edit_text("❌ Reminder creation cancelled.")
+        except TelegramBadRequest:
+            pass
 
     # Natural Language Handler via OmniRoute Combo (Supports Single & Multiple Reminders)
     @dp.message(F.text)
@@ -389,6 +422,10 @@ def register_handlers(dp: Dispatcher) -> None:
         try:
             tz = await get_user_timezone(user.id)
             parsed_list = await parse_reminder_with_omniroute(message.text, user_timezone=tz)
+        except Exception as err:
+            logger.exception("Error parsing reminder via OmniRoute: %s", err)
+            await message.answer("⚠️ An error occurred while parsing your message. Please try again.")
+            return
         finally:
             typing_active = False
             typing_task.cancel()
@@ -437,8 +474,15 @@ def register_handlers(dp: Dispatcher) -> None:
                 InlineKeyboardButton(text="✏️ Open Mini App", web_app=WebAppInfo(url=settings.webapp_url))
             ])
 
-        await message.answer(
-            preview_text,
-            parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-        )
+        try:
+            await message.answer(
+                preview_text,
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            )
+        except Exception:
+            await message.answer(
+                preview_text.replace("*", "").replace("`", ""),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+            )
+
