@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 import pytz
-from aiogram import Bot, Dispatcher, F
+from aiogram import BaseMiddleware, Bot, Dispatcher, F
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
@@ -14,6 +14,8 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    TelegramObject,
+    Update,
     WebAppInfo,
 )
 from backend.config import settings
@@ -27,6 +29,7 @@ from backend.database import (
     get_user_meal_times,
     get_user_reminders,
     get_user_timezone,
+    is_admin_user,
     reset_user_meal_times,
     set_user_meal_times,
     set_user_timezone,
@@ -155,7 +158,36 @@ def get_timezone_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 
+class AdminOnlyMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Any,
+        event: TelegramObject,
+        data: dict[str, Any],
+    ) -> Any:
+        user = data.get("event_from_user")
+        if not user and isinstance(event, Update):
+            if event.message and event.message.from_user:
+                user = event.message.from_user
+            elif event.callback_query and event.callback_query.from_user:
+                user = event.callback_query.from_user
+
+        if user:
+            if not await is_admin_user(user.id):
+                logger.warning("Blocked unauthorized access attempt by Telegram user_id=%s (@%s)", user.id, user.username)
+                if isinstance(event, Update):
+                    if event.message:
+                        await event.message.answer("⛔️ Access Denied. This bot is private and restricted to authorized administrators.")
+                    elif event.callback_query:
+                        await event.callback_query.answer("⛔️ Access Denied. Authorized admins only.", show_alert=True)
+                return None
+
+        return await handler(event, data)
+
+
 def register_handlers(dp: Dispatcher) -> None:
+    dp.update.outer_middleware(AdminOnlyMiddleware())
+
     @dp.message(CommandStart())
     async def cmd_start(message: Message) -> None:
         user = message.from_user

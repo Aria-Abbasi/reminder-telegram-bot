@@ -390,6 +390,18 @@
     async function initUser() {
       try {
         const res = await fetch('/api/me', { headers: getAuthHeaders() });
+        if (res.status === 403) {
+          document.body.innerHTML = `
+            <div class="flex flex-col items-center justify-center min-h-[70vh] text-center p-6">
+              <div class="w-16 h-16 rounded-full bg-red-500/10 text-red-500 flex items-center justify-center text-3xl mb-4 border border-red-500/20">
+                <i class="fa-solid fa-lock"></i>
+              </div>
+              <h2 class="text-xl font-bold mb-2">Access Denied</h2>
+              <p class="text-slate-400 text-sm max-w-xs">This reminder bot is private and restricted to authorized administrators only.</p>
+            </div>
+          `;
+          return;
+        }
         if (res.ok) {
           const user = await res.json();
           document.getElementById('userName').textContent = user.first_name ? `${user.first_name}'s Reminders` : 'Reminders';

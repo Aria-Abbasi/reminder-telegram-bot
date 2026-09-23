@@ -94,3 +94,18 @@ async def test_api_endpoints():
         ai_data = ai_res.json()
         assert "reminders" in ai_data
         assert len(ai_data["reminders"]) >= 1
+
+
+@pytest.mark.asyncio
+async def test_admin_whitelist():
+    from backend.database import add_admin_user, is_admin_user, list_admin_users, remove_admin_user
+    await init_db()
+    test_user_id = 9876543210
+    assert not await is_admin_user(test_user_id)
+    await add_admin_user(test_user_id)
+    assert await is_admin_user(test_user_id)
+    admins = await list_admin_users()
+    assert test_user_id in admins
+    await remove_admin_user(test_user_id)
+    assert not await is_admin_user(test_user_id)
+

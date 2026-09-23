@@ -66,6 +66,14 @@ async def init_db() -> None:
             ON reminders(user_id, status)
         """)
 
+        # Admins table for persistent admin storage
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS admins (
+                user_id INTEGER PRIMARY KEY,
+                added_at TEXT NOT NULL
+            )
+        """)
+
         # Migration: Ensure meal time columns exist on users table
         for col, default_val in [
             ("breakfast_time", "'08:30'"),
@@ -83,6 +91,14 @@ async def init_db() -> None:
             await conn.execute("UPDATE users SET timezone = 'Asia/Tehran' WHERE timezone = 'UTC' OR timezone IS NULL OR timezone = ''")
         except Exception:
             pass
+
+        # Seed admins from environment if specified
+        now = utc_now_iso()
+        for admin_id in settings.env_admin_ids:
+            try:
+                await conn.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (admin_id, now))
+            except Exception:
+                pass
 
         await conn.commit()
     logger.info("Database initialized successfully at %s", settings.db_path)
@@ -221,6 +237,44 @@ async def reset_user_meal_times(user_id: int) -> dict[str, str]:
         )
         await conn.commit()
     return dict(DEFAULT_MEAL_TIMES)
+
+
+async def is_admin_user(user_id: int) -> bool:
+    from backend.config import is_token_configured
+    # If running tests or standalone without configured bot token, allow dev mock user
+    if not is_token_configured() and user_id in (12345678, 999999):
+        return True
+
+    # Fast check in environment admin list
+    if user_id in settings.env_admin_ids:
+        return True
+
+    # Check SQLite admins table
+    async with get_db_connection() as conn:
+        async with conn.execute("SELECT 1 FROM admins WHERE user_id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return bool(row)
+
+
+async def add_admin_user(user_id: int) -> None:
+    now = utc_now_iso()
+    async with get_db_connection() as conn:
+        await conn.execute("INSERT OR IGNORE INTO admins (user_id, added_at) VALUES (?, ?)", (user_id, now))
+        await conn.commit()
+
+
+async def remove_admin_user(user_id: int) -> None:
+    async with get_db_connection() as conn:
+        await conn.execute("DELETE FROM admins WHERE user_id = ?", (user_id,))
+        await conn.commit()
+
+
+async def list_admin_users() -> list[int]:
+    async with get_db_connection() as conn:
+        async with conn.execute("SELECT user_id FROM admins") as cur:
+            rows = await cur.fetchall()
+            db_ids = {r["user_id"] for r in rows}
+    return sorted(list(db_ids | settings.env_admin_ids))
 
 
 async def create_reminder(

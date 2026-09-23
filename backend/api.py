@@ -19,6 +19,7 @@ from backend.database import (
     get_user_meal_times,
     get_user_reminders,
     get_user_timezone,
+    is_admin_user,
     reset_user_meal_times,
     set_user_meal_times,
     set_user_timezone,
@@ -128,6 +129,13 @@ async def get_current_user(
         user_data = validate_telegram_init_data(x_telegram_init_data)
 
     user_id = int(user_data["id"])
+    if not await is_admin_user(user_id):
+        logger.warning("Unauthorized API access attempt by user_id=%s", user_id)
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Authorized admins only.",
+        )
+
     username = user_data.get("username")
     first_name = user_data.get("first_name")
     return await get_or_create_user(user_id, username, first_name)

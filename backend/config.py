@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     port: int = 8080
     database_path: str = "data/reminders.db"
     default_timezone: str = "Asia/Tehran"
+    admin_user_ids: str = ""
     
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -26,6 +27,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
     
+    @property
+    def env_admin_ids(self) -> set[int]:
+        ids = set()
+        if self.admin_user_ids:
+            for part in self.admin_user_ids.split(","):
+                part = part.strip()
+                if part.isdigit():
+                    ids.add(int(part))
+        return ids
+
     @property
     def db_path(self) -> Path:
         path = Path(self.database_path)
@@ -36,3 +47,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def is_token_configured() -> bool:
+    import re
+    return bool(
+        settings.telegram_bot_token
+        and re.match(r"^\d+:[A-Za-z0-9_-]{20,}$", settings.telegram_bot_token.strip())
+    )
