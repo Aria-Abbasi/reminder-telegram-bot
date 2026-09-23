@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Reminders Dashboard</title>
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+  <style>
+    :root {
+      --bg-color: var(--tg-theme-bg-color, #0f172a);
+      --text-color: var(--tg-theme-text-color, #f8fafc);
+      --hint-color: var(--tg-theme-hint-color, #94a3b8);
+      --link-color: var(--tg-theme-link-color, #38bdf8);
+      --button-color: var(--tg-theme-button-color, #2563eb);
+      --button-text-color: var(--tg-theme-button-text-color, #ffffff);
+      --secondary-bg-color: var(--tg-theme-secondary-bg-color, #1e293b);
+      --card-border: rgba(255, 255, 255, 0.08);
+    }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-color);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .card {
+      background-color: var(--secondary-bg-color);
+      border: 1px solid var(--card-border);
+      backdrop-filter: blur(12px);
+    }
+
+    .btn-primary {
+      background-color: var(--button-color);
+      color: var(--button-text-color);
+    }
+
+    /* Modal animation */
+    .modal-enter {
+      opacity: 0;
+      transform: translateY(100%);
+    }
+    .modal-enter-active {
+      opacity: 1;
+      transform: translateY(0);
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .modal-leave-active {
+      opacity: 0;
+      transform: translateY(100%);
+      transition: all 0.2s ease-in;
+    }
+
+    /* Custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.2);
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="p-4 pb-24 max-w-lg mx-auto select-none">
+
+  <!-- Header -->
+  <header class="flex items-center justify-between mb-5 pt-1">
+    <div class="flex items-center gap-3">
+      <div id="userAvatar" class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-white font-bold text-lg shadow-md shadow-blue-500/20">
+        <i class="fa-solid fa-bell"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight" id="userName">Reminders</h1>
+        <div class="flex items-center gap-1.5 text-xs text-slate-400">
+          <i class="fa-solid fa-globe text-[11px] text-blue-400"></i>
+          <span id="userTimezone">Detecting timezone...</span>
+        </div>
+      </div>
+    </div>
+    <button onclick="openModal()" class="w-10 h-10 rounded-xl btn-primary flex items-center justify-center shadow-lg active:scale-95 transition-transform">
+      <i class="fa-solid fa-plus text-base"></i>
+    </button>
+  </header>
+
+  <!-- OmniRoute AI Quick Add Bar -->
+  <section class="card rounded-2xl p-3.5 mb-5 shadow-sm">
+    <div class="flex items-center gap-2 mb-2 text-xs font-semibold text-sky-400 uppercase tracking-wider">
+      <i class="fa-solid fa-wand-magic-sparkles"></i>
+      <span>OmniRoute AI Quick Add</span>
+    </div>
+    <div class="flex gap-2">
+      <input 
+        id="aiPromptInput" 
+        type="text" 
+        placeholder="e.g. Take vitamins every 8 hours starting 9am until Friday..." 
+        class="w-full bg-slate-800/80 border border-slate-700/60 rounded-xl px-3 py-2 text-sm text-slate-100 placeholder-slate-400 focus:outline-none focus:border-blue-500 transition-colors"
+        onkeydown="if(event.key === 'Enter') handleAIQuickAdd()"
+      >
+      <button 
+        id="aiSubmitBtn" 
+        onclick="handleAIQuickAdd()" 
+        class="btn-primary px-3.5 rounded-xl text-sm font-medium flex items-center justify-center shrink-0 active:scale-95 transition"
+      >
+        <span id="aiBtnText">Parse</span>
+        <i id="aiBtnSpinner" class="fa-solid fa-spinner fa-spin hidden"></i>
+      </button>
+    </div>
+  </section>
+
+  <!-- Filter Tabs -->
+  <nav class="flex items-center gap-2 mb-4 bg-slate-800/50 p-1 rounded-xl text-xs font-medium border border-slate-700/30">
+    <button onclick="setTab('active')" id="tab-active" class="flex-1 py-1.5 rounded-lg text-center bg-blue-600 text-white font-semibold transition">
+      Active (<span id="count-active">0</span>)
+    </button>
+    <button onclick="setTab('recurring')" id="tab-recurring" class="flex-1 py-1.5 rounded-lg text-center text-slate-400 hover:text-white transition">
+      Recurring (<span id="count-recurring">0</span>)
+    </button>
+    <button onclick="setTab('completed')" id="tab-completed" class="flex-1 py-1.5 rounded-lg text-center text-slate-400 hover:text-white transition">
+      Completed (<span id="count-completed">0</span>)
+    </button>
+  </nav>
+
+  <!-- Reminder Cards Container -->
+  <main id="remindersContainer" class="space-y-3">
+    <div class="text-center py-12 text-slate-400 text-sm">
+      <i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2 text-blue-500"></i>
+      <p>Loading your reminders...</p>
+    </div>
+  </main>
+
+  <!-- Floating Add Button for Mobile -->
+  <div class="fixed bottom-6 right-6">
+    <button onclick="openModal()" class="btn-primary w-14 h-14 rounded-full shadow-2xl flex items-center justify-center text-xl active:scale-90 transition transform">
+      <i class="fa-solid fa-plus"></i>
+    </button>
+  </div>
+
+  <!-- Create / Edit Reminder Modal -->
+  <div id="reminderModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="card w-full max-w-lg rounded-t-3xl sm:rounded-3xl p-5 border-t sm:border border-slate-700/80 max-h-[92vh] overflow-y-auto">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold" id="modalTitle">New Reminder</h2>
+        <button onclick="closeModal()" class="w-8 h-8 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center hover:text-white">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <form id="reminderForm" onsubmit="handleSaveReminder(event)" class="space-y-4">
+        <!-- Task Title -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">What should I remind you about? *</label>
+          <input 
+            id="formTitle" 
+            type="text" 
+            required 
+            placeholder="e.g. Water plants, Check oven, Take medication" 
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
+          >
+        </div>
+
+        <!-- Start Time -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+            <i class="fa-regular fa-clock text-blue-400 mr-1"></i> Start Date & Time (First Execution) *
+          </label>
+          <input 
+            id="formStartTime" 
+            type="datetime-local" 
+            required 
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          >
+          <p class="text-[11px] text-slate-400 mt-1">The job will trigger for the first time at this exact date & time.</p>
+        </div>
+
+        <!-- Recurrence Interval -->
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1.5">
+            <i class="fa-solid fa-rotate text-emerald-400 mr-1"></i> Recurrence Interval (Optional)
+          </label>
+          <div class="grid grid-cols-3 gap-1.5 mb-2 text-xs">
+            <button type="button" onclick="selectIntervalPreset(0, 'None (One-time)')" class="interval-chip py-2 px-2 rounded-xl border border-blue-500 bg-blue-600/20 text-blue-300 font-medium text-center">None (Once)</button>
+            <button type="button" onclick="selectIntervalPreset(21600, 'Every 6 hours')" class="interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center">Every 6 Hours</button>
+            <button type="button" onclick="selectIntervalPreset(28800, 'Every 8 hours')" class="interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center">Every 8 Hours</button>
+            <button type="button" onclick="selectIntervalPreset(43200, 'Every 12 hours')" class="interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center">Every 12 Hours</button>
+            <button type="button" onclick="selectIntervalPreset(86400, 'Daily')" class="interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center">Daily (24h)</button>
+            <button type="button" onclick="selectIntervalPreset(604800, 'Every 7 days')" class="interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center">Every 7 Days</button>
+          </div>
+          <button type="button" onclick="toggleCustomInterval()" id="customIntervalToggle" class="text-xs text-sky-400 hover:underline flex items-center gap-1">
+            <i class="fa-solid fa-sliders"></i>
+            <span>Or configure custom interval...</span>
+          </button>
+
+          <!-- Custom Interval Row -->
+          <div id="customIntervalSection" class="hidden mt-2 p-3 bg-slate-800/80 rounded-xl border border-slate-700">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-300">Every</span>
+              <input id="customIntervalValue" type="number" min="1" value="3" class="w-16 bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-sm text-center text-white">
+              <select id="customIntervalUnit" class="bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-sm text-white">
+                <option value="3600">Hours</option>
+                <option value="86400">Days</option>
+                <option value="604800">Weeks</option>
+                <option value="60">Minutes</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- Optional End Time -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-xs font-semibold text-slate-300 flex items-center gap-1">
+              <i class="fa-solid fa-flag-checkered text-rose-400"></i> Set End Time (Optional)
+            </label>
+            <input type="checkbox" id="enableEndTime" onchange="toggleEndTimeInput()" class="rounded bg-slate-800 border-slate-700 text-blue-600 focus:ring-0">
+          </div>
+          <div id="endTimeContainer" class="hidden">
+            <input 
+              id="formEndTime" 
+              type="datetime-local" 
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+            <p class="text-[11px] text-slate-400 mt-1">Recurrence stops automatically after this date & time.</p>
+          </div>
+        </div>
+
+        <!-- Submit Button -->
+        <div class="pt-2">
+          <button type="submit" id="saveReminderBtn" class="btn-primary w-full py-3 rounded-xl font-semibold text-sm shadow-lg active:scale-98 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-check"></i>
+            <span>Schedule Reminder</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // Telegram Web App SDK Initialization
+    const tg = window.Telegram?.WebApp;
+    if (tg) {
+      tg.ready();
+      tg.expand();
+      if (tg.enableClosingConfirmation) tg.enableClosingConfirmation();
+    }
+
+    // State
+    let currentTab = 'active';
+    let remindersData = [];
+    let selectedIntervalSeconds = null;
+    let selectedIntervalLabel = null;
+    let userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+      initUser();
+      loadReminders();
+      setDefaultStartTime();
+    });
+
+    function getAuthHeaders() {
+      const headers = { 'Content-Type': 'application/json' };
+      if (tg?.initData) {
+        headers['X-Telegram-Init-Data'] = tg.initData;
+      }
+      return headers;
+    }
+
+    async function initUser() {
+      try {
+        const res = await fetch('/api/me', { headers: getAuthHeaders() });
+        if (res.ok) {
+          const user = await res.json();
+          document.getElementById('userName').textContent = user.first_name ? `${user.first_name}'s Reminders` : 'Reminders';
+          userTimezone = user.timezone || userTimezone;
+          document.getElementById('userTimezone').textContent = userTimezone;
+        }
+      } catch (e) {
+        console.warn('Could not fetch user profile:', e);
+        document.getElementById('userTimezone').textContent = userTimezone;
+      }
+    }
+
+    function setDefaultStartTime() {
+      const now = new Date();
+      now.setHours(now.getHours() + 1);
+      now.setMinutes(0);
+      now.setSeconds(0);
+      now.setMilliseconds(0);
+      const iso = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+      document.getElementById('formStartTime').value = iso;
+    }
+
+    async function loadReminders() {
+      try {
+        const res = await fetch('/api/reminders', { headers: getAuthHeaders() });
+        if (res.ok) {
+          remindersData = await res.json();
+          renderReminders();
+          updateCounts();
+        }
+      } catch (e) {
+        console.error('Failed to load reminders:', e);
+      }
+    }
+
+    function updateCounts() {
+      const active = remindersData.filter(r => r.status === 'active');
+      const recurring = remindersData.filter(r => r.status === 'active' && r.interval_seconds);
+      const completed = remindersData.filter(r => r.status !== 'active');
+
+      document.getElementById('count-active').textContent = active.length;
+      document.getElementById('count-recurring').textContent = recurring.length;
+      document.getElementById('count-completed').textContent = completed.length;
+    }
+
+    function setTab(tab) {
+      currentTab = tab;
+      ['active', 'recurring', 'completed'].forEach(t => {
+        const btn = document.getElementById(`tab-${t}`);
+        if (t === tab) {
+          btn.className = 'flex-1 py-1.5 rounded-lg text-center bg-blue-600 text-white font-semibold transition';
+        } else {
+          btn.className = 'flex-1 py-1.5 rounded-lg text-center text-slate-400 hover:text-white transition';
+        }
+      });
+      renderReminders();
+    }
+
+    function formatDateTime(isoString) {
+      if (!isoString) return '';
+      const d = new Date(isoString);
+      return d.toLocaleString([], {
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    }
+
+    function renderReminders() {
+      const container = document.getElementById('remindersContainer');
+      let filtered = [];
+
+      if (currentTab === 'active') {
+        filtered = remindersData.filter(r => r.status === 'active');
+      } else if (currentTab === 'recurring') {
+        filtered = remindersData.filter(r => r.status === 'active' && r.interval_seconds);
+      } else if (currentTab === 'completed') {
+        filtered = remindersData.filter(r => r.status !== 'active');
+      }
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div class="card rounded-2xl p-8 text-center text-slate-400">
+            <i class="fa-regular fa-calendar-check text-4xl mb-3 text-slate-500"></i>
+            <p class="font-medium text-slate-300">No ${currentTab} reminders</p>
+            <p class="text-xs text-slate-500 mt-1">Tap + or type with OmniRoute AI above to create one.</p>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = filtered.map(r => {
+        const isRecurring = Boolean(r.interval_seconds);
+        const recurrenceBadge = isRecurring 
+          ? `<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+               <i class="fa-solid fa-rotate text-[9px]"></i> ${r.interval_label || 'Recurring'}
+             </span>`
+          : `<span class="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-slate-700/50 text-slate-300">
+               <i class="fa-solid fa-bolt text-[9px]"></i> Once
+             </span>`;
+
+        const endBadge = r.end_time 
+          ? `<span class="text-[11px] text-rose-400 flex items-center gap-1">
+               <i class="fa-solid fa-flag-checkered text-[9px]"></i> Until ${formatDateTime(r.end_time)}
+             </span>` 
+          : '';
+
+        const isCompleted = r.status !== 'active';
+
+        return `
+          <div class="card rounded-2xl p-4 shadow-sm hover:border-slate-600 transition">
+            <div class="flex items-start justify-between gap-3 mb-2">
+              <div class="flex-1">
+                <h3 class="font-semibold text-sm text-slate-100 ${isCompleted ? 'line-through text-slate-400' : ''}">${escapeHtml(r.title)}</h3>
+                <div class="flex flex-wrap items-center gap-2 mt-1.5">
+                  ${recurrenceBadge}
+                  ${endBadge}
+                </div>
+              </div>
+              <button onclick="handleDeleteReminder(${r.id})" class="text-slate-500 hover:text-rose-400 p-1 transition" title="Delete">
+                <i class="fa-regular fa-trash-can text-sm"></i>
+              </button>
+            </div>
+
+            <div class="flex items-center justify-between pt-2 border-t border-slate-800/80 text-xs">
+              <div class="text-slate-400 flex items-center gap-1.5">
+                <i class="fa-regular fa-clock text-blue-400"></i>
+                <span>${isCompleted ? 'Completed' : 'Next: ' + formatDateTime(r.next_run_at)}</span>
+              </div>
+
+              ${!isCompleted ? `
+                <div class="flex items-center gap-1.5">
+                  <button onclick="handleSnoozeReminder(${r.id}, 900)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium active:scale-95 transition">
+                    +15m
+                  </button>
+                  <button onclick="handleSnoozeReminder(${r.id}, 3600)" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[11px] font-medium active:scale-95 transition">
+                    +1h
+                  </button>
+                  <button onclick="handleCompleteReminder(${r.id})" class="px-2.5 py-1 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 text-[11px] font-semibold active:scale-95 transition flex items-center gap-1">
+                    <i class="fa-solid fa-check text-[10px]"></i> Done
+                  </button>
+                </div>
+              ` : `
+                <span class="text-slate-500 text-[11px] italic">Finished</span>
+              `}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectIntervalPreset(seconds, label) {
+      selectedIntervalSeconds = seconds > 0 ? seconds : null;
+      selectedIntervalLabel = seconds > 0 ? label : null;
+
+      document.querySelectorAll('.interval-chip').forEach(chip => {
+        if (chip.textContent.trim().toLowerCase().includes(label.toLowerCase().slice(0, 5))) {
+          chip.className = 'interval-chip py-2 px-2 rounded-xl border border-blue-500 bg-blue-600/20 text-blue-300 font-medium text-center';
+        } else {
+          chip.className = 'interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center';
+        }
+      });
+      document.getElementById('customIntervalSection').classList.add('hidden');
+    }
+
+    function toggleCustomInterval() {
+      const section = document.getElementById('customIntervalSection');
+      section.classList.toggle('hidden');
+      if (!section.classList.contains('hidden')) {
+        document.querySelectorAll('.interval-chip').forEach(chip => {
+          chip.className = 'interval-chip py-2 px-2 rounded-xl border border-slate-700 bg-slate-800 text-slate-300 text-center';
+        });
+      }
+    }
+
+    function toggleEndTimeInput() {
+      const enabled = document.getElementById('enableEndTime').checked;
+      const container = document.getElementById('endTimeContainer');
+      container.classList.toggle('hidden', !enabled);
+      if (enabled && !document.getElementById('formEndTime').value) {
+        const d = new Date();
+        d.setDate(d.getDate() + 7);
+        const iso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        document.getElementById('formEndTime').value = iso;
+      }
+    }
+
+    async function handleAIQuickAdd() {
+      const input = document.getElementById('aiPromptInput');
+      const prompt = input.value.trim();
+      if (!prompt) return;
+
+      const btnText = document.getElementById('aiBtnText');
+      const spinner = document.getElementById('aiBtnSpinner');
+      btnText.classList.add('hidden');
+      spinner.classList.remove('hidden');
+
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('medium');
+
+      try {
+        const res = await fetch('/api/ai/parse', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ prompt }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          // Open modal prefilled with parsed AI data for user confirmation
+          openModal();
+          document.getElementById('formTitle').value = data.title || prompt;
+          if (data.start_time) {
+            const localStart = new Date(data.start_time);
+            document.getElementById('formStartTime').value = new Date(localStart.getTime() - localStart.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          }
+          if (data.interval_seconds) {
+            selectIntervalPreset(data.interval_seconds, data.interval_label || 'Custom');
+          } else {
+            selectIntervalPreset(0, 'None (One-time)');
+          }
+          if (data.end_time) {
+            document.getElementById('enableEndTime').checked = true;
+            toggleEndTimeInput();
+            const localEnd = new Date(data.end_time);
+            document.getElementById('formEndTime').value = new Date(localEnd.getTime() - localEnd.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+          } else {
+            document.getElementById('enableEndTime').checked = false;
+            toggleEndTimeInput();
+          }
+          input.value = '';
+          if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+        } else {
+          alert('Could not parse reminder with AI. Try typing directly in the form.');
+        }
+      } catch (e) {
+        console.error('AI quick add failed:', e);
+      } finally {
+        btnText.classList.remove('hidden');
+        spinner.classList.add('hidden');
+      }
+    }
+
+    async function handleSaveReminder(event) {
+      event.preventDefault();
+      const title = document.getElementById('formTitle').value.trim();
+      const startTimeInput = document.getElementById('formStartTime').value;
+      if (!title || !startTimeInput) return;
+
+      // Convert local datetime-local to UTC ISO string
+      const startDate = new Date(startTimeInput);
+      const startIso = startDate.toISOString();
+
+      let intervalSeconds = selectedIntervalSeconds;
+      let intervalLabel = selectedIntervalLabel;
+
+      const isCustom = !document.getElementById('customIntervalSection').classList.contains('hidden');
+      if (isCustom) {
+        const val = parseInt(document.getElementById('customIntervalValue').value) || 1;
+        const unit = parseInt(document.getElementById('customIntervalUnit').value) || 3600;
+        intervalSeconds = val * unit;
+        const unitLabel = document.getElementById('customIntervalUnit').selectedOptions[0].text;
+        intervalLabel = `Every ${val} ${unitLabel}`;
+      }
+
+      let endIso = null;
+      if (document.getElementById('enableEndTime').checked) {
+        const endTimeInput = document.getElementById('formEndTime').value;
+        if (endTimeInput) {
+          endIso = new Date(endTimeInput).toISOString();
+        }
+      }
+
+      const payload = {
+        title,
+        start_time: startIso,
+        interval_seconds: intervalSeconds,
+        interval_label: intervalLabel,
+        end_time: endIso,
+      };
+
+      try {
+        const res = await fetch('/api/reminders', {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify(payload),
+        });
+
+        if (res.ok) {
+          if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+          closeModal();
+          await loadReminders();
+        } else {
+          alert('Failed to save reminder.');
+        }
+      } catch (e) {
+        console.error('Error saving reminder:', e);
+      }
+    }
+
+    async function handleSnoozeReminder(id, seconds) {
+      if (tg?.HapticFeedback) tg.HapticFeedback.impactOccurred('light');
+      try {
+        const res = await fetch(`/api/reminders/${id}/snooze`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ seconds }),
+        });
+        if (res.ok) await loadReminders();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function handleCompleteReminder(id) {
+      if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('success');
+      try {
+        const res = await fetch(`/api/reminders/${id}/complete`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) await loadReminders();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function handleDeleteReminder(id) {
+      if (!confirm('Delete this reminder?')) return;
+      if (tg?.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+      try {
+        const res = await fetch(`/api/reminders/${id}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+        });
+        if (res.ok) await loadReminders();
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function openModal() {
+      document.getElementById('reminderModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('reminderModal').classList.add('hidden');
+    }
+
+    function escapeHtml(str) {
+      return (str || '').replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+  </script>
+</body>
+</html>
